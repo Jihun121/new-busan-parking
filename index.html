@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>부산 공영주차장 현황</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <div class="container">
+        <h1>부산 공영주차장 현황</h1>
+        <p class="description"> 부산광역시 공영주차장 Open API를 이용한 실시간 주차정보입니다. </p> <button id="loadBtn">주차장 정보 불러오기</button>
+        <div class="search-box">
+            <input type="text" id="searchInput" placeholder="주차장 이름을 입력하세요">
+            <button id="searchBtn">검색</button> <button id="resetBtn">전체보기</button>
+        </div>
+        <div id="summary"></div>
+        <div id="parkingList" class="parking-list"></div>
+        <div id="paging" class="paging">
+            <button id="prevBtn">이전</button> <span id="pageInfo">1 페이지</span>
+            <button id="nextBtn">다음</button>
+        </div>
+    </div>
+    <script src="app.js"></script>
+</body>
+
+</html>
