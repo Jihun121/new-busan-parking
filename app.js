@@ -55,9 +55,26 @@ async function loadParkingData(pageNo, keyword = "") {
         if (keyword) params.set("keyword", keyword);
 
         const response = await fetch(`/api/parking?${params.toString()}`);
-        if (!response.ok) throw new Error(`HTTP 오류: ${response.status}`);
 
-        const data = await response.json();
+        const responseText = await response.text();
+
+        if (!response.ok) {
+            console.error("API 서버 응답:", responseText);
+
+            let errorMessage = responseText;
+
+            try {
+                const errorData = JSON.parse(responseText);
+                errorMessage = errorData.detail || errorData.error || responseText;
+            } catch {
+                // JSON이 아니면 원문 그대로 사용
+            }
+
+            throw new Error(`HTTP 오류 ${response.status}: ${errorMessage}`);
+        }
+
+        const data = JSON.parse(responseText);
+
         currentPage = pageNo;
 
         showSummary(data.totalCount, data.keyword);
