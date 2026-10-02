@@ -1,12 +1,7 @@
-export function normalizeName(value) {
-    if (value === null || value === undefined) {
-        return "";
-    }
-
-    return String(value)
+export function normalizeName(name) {
+    return String(name || "")
         .trim()
         .toLowerCase()
         .replace(/\s+/g, "")
-        .replace(/[()（）[\]{}]/g, "")
-        .replace(/[·ㆍ]/g, "");
+        .replace(/[()（）\-_/]/g, "");
 }

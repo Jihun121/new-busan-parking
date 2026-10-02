@@ -110,6 +110,10 @@ function showParkingList(items) {
 
         const name = escapeHtml(parking.parknm || "이름 없음");
         const code = escapeHtml(parking.parkgcd || "-");
+        const address = escapeHtml(parking.address || parking.roadAddress || parking.lotAddress || "정보 없음");
+        const operation = formatOperation(parking.operationStart, parking.operationEnd);
+        const fee = formatFee(parking);
+        const coordinate = formatCoordinate(parking.latitude, parking.longitude);
         const total = displayNumber(parking.totalParkingCount ?? parking.maxcnt);
         const current = displayNumber(parking.currentParkingCount ?? parking.parkingcnt);
         const available = displayNumber(parking.availableParkingCount ?? parking.curravacnt);
@@ -131,11 +135,46 @@ function showParkingList(items) {
                 <div><span>주차 가능</span><strong>${available}</strong></div>
             </div>
             <div class="status ${status.className}">${status.text}</div>
+            <div class="parking-details">
+                <p><strong>주소</strong> ${address}</p>
+                <p><strong>요금</strong> ${fee}</p>
+                <p><strong>운영시간</strong> ${operation}</p>
+                <p><strong>좌표</strong> ${coordinate}</p>
+            </div>
             <p class="update-time">${updateTime}</p>
             <p class="update-time">${source}</p>`;
 
         parkingList.appendChild(card);
     });
+}
+
+
+function formatOperation(start, end) {
+    const s = String(start || "").trim();
+    const e = String(end || "").trim();
+    if (!s && !e) return "정보 없음";
+    if (s && e) return `${escapeHtml(s)} ~ ${escapeHtml(e)}`;
+    return escapeHtml(s || e);
+}
+
+function formatFee(parking) {
+    const parts = [];
+    if (parking.baseTime || parking.baseFee) {
+        parts.push(`${escapeHtml(parking.baseTime || "기본시간 정보 없음")} / ${escapeHtml(parking.baseFee || "기본요금 정보 없음")}`);
+    }
+    if (parking.addTime || parking.addFee) {
+        parts.push(`추가 ${escapeHtml(parking.addTime || "-")} / ${escapeHtml(parking.addFee || "-")}`);
+    }
+    if (parking.dailyPassFee) parts.push(`일일 ${escapeHtml(parking.dailyPassFee)}`);
+    if (parking.monthlyPassFee) parts.push(`월정기 ${escapeHtml(parking.monthlyPassFee)}`);
+    return parts.length ? parts.join(" · ") : "정보 없음";
+}
+
+function formatCoordinate(latitude, longitude) {
+    const lat = toNumber(latitude);
+    const lng = toNumber(longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return "정보 없음";
+    return `${lat}, ${lng}`;
 }
 
 function getParkingStatus(available, total, current) {

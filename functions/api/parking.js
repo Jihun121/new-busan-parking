@@ -1,5 +1,5 @@
 import { fetchParkingList } from "../lib/fetchParkingList.js";
-import { fetchRealtime, fetchFacilityList } from "../lib/fetchRealtime.js";
+import { fetchRealtime } from "../lib/fetchRealtime.js";
 import { fetchBasicInfo } from "../lib/fetchBasicInfo.js";
 import { normalizeName } from "../lib/normalizeName.js";
 import { mergeParkingData } from "../lib/mergeParkingData.js";
@@ -7,25 +7,29 @@ import { mergeParkingData } from "../lib/mergeParkingData.js";
 const DEFAULT_ROWS = 10;
 const MAX_ROWS = 50;
 const SEARCH_PAGE_SIZE = 100;
-const DEFAULT_SEARCH_MAX_PAGES = 10;
-const DEFAULT_CONCURRENCY = 3;
+const SEARCH_MAX_PAGES = 10;
+const FACILITY_LIST_TIMEOUT_MS = 8000;
+const REALTIME_TIMEOUT_MS = 6000;
+const CITY_TIMEOUT_MS = 7000;
+const REALTIME_CONCURRENCY = 4;
 
 export async function onRequestGet(context) {
     const startedAt = Date.now();
 
     try {
-        const serviceKey = normalizeServiceKey(context.env.BUSAN_API_KEY);
+        const facilityServiceKey = normalizeServiceKey(
+            context.env.BUSAN_FACILITY_API_KEY || context.env.BUSAN_API_KEY
+        );
+        const cityServiceKey = normalizeServiceKey(
+            context.env.BUSAN_CITY_API_KEY || context.env.BUSAN_API_KEY
+        );
 
-        if (!serviceKey) {
+        if (!facilityServiceKey) {
             return jsonResponse({
-                error: "BUSAN_API_KEY가 설정되어 있지 않습니다.",
-                code: "MISSING_SERVICE_KEY"
+                error: "BUSAN_FACILITY_API_KEY 또는 BUSAN_API_KEY가 설정되어 있지 않습니다.",
+                code: "FACILITY_MISSING_KEY"
             }, 500);
         }
-
-        const facilityServiceKey = normalizeServiceKey(
-            context.env.BUSAN_FACILITY_API_KEY || serviceKey
-        );
 
         const requestUrl = new URL(context.request.url);
         const pageNo = positiveInt(requestUrl.searchParams.get("pageNo"), 1);
@@ -36,83 +40,104 @@ export async function onRequestGet(context) {
         );
         const keyword = (requestUrl.searchParams.get("keyword") || "").trim();
 
-        const concurrency = clamp(
-            positiveInt(context.env.BUSAN_REALTIME_CONCURRENCY, DEFAULT_CONCURRENCY),
-            1,
-            5
+        const facilityResult = keyword
+            ? await fetchFacilitySearch({
+                serviceKey: facilityServiceKey,
+                keyword,
+                maxPages: SEARCH_MAX_PAGES
+            })
+            : await fetchParkingList({
+                serviceKey: facilityServiceKey,
+                pageNo,
+                numOfRows,
+                timeoutMs: FACILITY_LIST_TIMEOUT_MS
+            });
+
+        const facilityItems = facilityResult.items || [];
+
+        // API ③은 API ① 결과를 받은 뒤 이름/주소 기준으로 매칭합니다.
+        const basicInfoPromise = cityServiceKey
+            ? fetchBasicInfo({
+                serviceKey: cityServiceKey,
+                timeoutMs: CITY_TIMEOUT_MS,
+                parkingItems: facilityItems
+            })
+            : Promise.resolve({
+                ok: false,
+                code: "CITY_BASIC_MISSING_KEY",
+                error: "부산광역시 기본정보 API 인증키가 없습니다.",
+                records: []
+            });
+
+        // API ②: API ①의 parkgcd로 직접 연결
+        const realtimeResults = await mapWithConcurrency(
+            facilityItems,
+            REALTIME_CONCURRENCY,
+            parking => fetchRealtime({
+                serviceKey: facilityServiceKey,
+                parkgcd: firstText(
+                    parking?.parkgcd,
+                    parking?.parkGcd,
+                    parking?.parkGCd,
+                    parking?.pParkGCd
+                ),
+                timeoutMs: REALTIME_TIMEOUT_MS
+            })
         );
 
-        const searchMaxPages = clamp(
-            positiveInt(context.env.BUSAN_SEARCH_MAX_PAGES, DEFAULT_SEARCH_MAX_PAGES),
-            1,
-            20
-        );
+        const basicInfoResult = await basicInfoPromise;
+        const basicRecords = basicInfoResult?.records || [];
 
-        const listResult = keyword
-            ? await fetchSearchResults({ serviceKey, keyword, searchMaxPages })
-            : await fetchParkingList({ serviceKey, pageNo, numOfRows });
+        const items = facilityItems.map((facility, index) => {
+            const normalizedFacility = normalizeFacilityItem(facility);
+            const realtime = realtimeResults[index] || {
+                available: false,
+                status: "no-data",
+                error: "실시간 정보 없음"
+            };
+            const basic = basicRecords[index] || null;
 
-        let items = listResult.items || [];
+            return mergeParkingData({
+                facility: normalizedFacility,
+                realtime,
+                basic
+            });
+        });
 
-        // 시설공단 데이터를 한 번만 받아 이름 매칭에 사용합니다.
-        // 실패해도 부산시 API 데이터만으로 화면을 구성할 수 있도록 합니다.
-        let facilityItems = [];
-        let facilityListStatus = "ok";
-
-        if (facilityServiceKey) {
-            try {
-                facilityItems = await fetchFacilityList({
-                    serviceKey: facilityServiceKey,
-                    timeoutMs: 8000,
-                    retries: 0
-                });
-            } catch (error) {
-                facilityItems = [];
-                facilityListStatus = error?.code || "error";
-                console.warn("facility list unavailable", error?.message);
-            }
-        } else {
-            facilityListStatus = "missing-key";
-        }
-
-        const parkingData = await mapWithConcurrency(
-            items,
-            concurrency,
-            async parking => {
-                const basic = await fetchBasicInfo({ parking });
-
-                const realtime = await fetchRealtime({
-                    serviceKey: facilityServiceKey,
-                    parking: basic,
-                    facilityItems
-                });
-
-                return mergeParkingData({ basic, realtime });
-            }
-        );
+        const totalCount = keyword
+            ? items.length
+            : Number(facilityResult.totalCount || items.length);
 
         return jsonResponse({
             pageNo,
             numOfRows,
-            totalCount: keyword ? parkingData.length : listResult.totalCount,
+            totalCount,
             keyword,
-            items: parkingData,
+            items,
             meta: {
-                sources: [
-                    "부산광역시_공영주차장 정보 조회",
-                    "부산시설공단_공영주차장 시설 현황 조회 서비스"
-                ],
                 elapsedMs: Date.now() - startedAt,
-                searchComplete: keyword ? listResult.searchComplete : true,
-                searchPagesScanned: keyword ? listResult.pagesScanned : 1,
-                facilityItemsLoaded: facilityItems.length,
-                facilityListStatus
+                api1: {
+                    source: "부산시설공단_공영주차장 시설 현황 조회 서비스",
+                    endpoint: "getParkingList_v2",
+                    items: facilityItems.length
+                },
+                api2: {
+                    source: "부산시설공단 실시간 주차현황",
+                    endpoint: "getParkingInfoList_v2",
+                    concurrency: REALTIME_CONCURRENCY,
+                    success: realtimeResults.filter(item => item?.available === true).length,
+                    noData: realtimeResults.filter(item => item?.available !== true).length
+                },
+                api3: {
+                    source: "부산광역시_공영주차장 정보 조회",
+                    matched: basicRecords.filter(item => item?.matched === true).length,
+                    status: basicInfoResult?.ok ? "ok" : "optional-failed",
+                    error: basicInfoResult?.ok ? null : basicInfoResult?.error || null
+                }
             }
         });
     } catch (error) {
         console.error("parking API error", error);
-
-        const status = clamp(Number(error?.statusCode) || 500, 400, 599);
 
         return jsonResponse({
             error: error?.message || "서버 처리 중 오류가 발생했습니다.",
@@ -121,80 +146,131 @@ export async function onRequestGet(context) {
             upstreamCode: error?.upstreamCode ?? null,
             upstreamMessage: error?.upstreamMessage ?? null,
             detail: error?.upstreamBody
-                ? String(error.upstreamBody).slice(0, 1000)
+                ? String(error.upstreamBody).slice(0, 1200)
                 : null
-        }, status);
+        }, clamp(Number(error?.statusCode) || 500, 400, 599));
     }
 }
 
-async function fetchSearchResults({ serviceKey, keyword, searchMaxPages }) {
-    const normalizedKeyword = normalizeName(keyword);
+async function fetchFacilitySearch({ serviceKey, keyword, maxPages }) {
+    const query = normalizeName(keyword);
     const matches = [];
     let totalCount = 0;
-    let pagesScanned = 0;
-    let searchComplete = true;
 
-    for (let page = 1; page <= searchMaxPages; page += 1) {
+    for (let page = 1; page <= maxPages; page += 1) {
         const result = await fetchParkingList({
             serviceKey,
             pageNo: page,
-            numOfRows: SEARCH_PAGE_SIZE
+            numOfRows: SEARCH_PAGE_SIZE,
+            timeoutMs: FACILITY_LIST_TIMEOUT_MS
         });
 
-        pagesScanned = page;
         totalCount = result.totalCount;
 
         for (const item of result.items || []) {
-            const name = normalizeName(item?.pkNam ?? item?.parknm ?? item?.parkNm);
-            if (name.includes(normalizedKeyword)) matches.push(item);
+            const name = normalizeName(
+                firstText(
+                    item?.parknm,
+                    item?.parkNm,
+                    item?.parkName,
+                    item?.pkNam
+                )
+            );
+
+            if (name.includes(query)) {
+                matches.push(item);
+            }
         }
 
-        if (page * SEARCH_PAGE_SIZE >= totalCount || (result.items || []).length === 0) {
+        if (
+            (result.items || []).length === 0 ||
+            page * SEARCH_PAGE_SIZE >= totalCount
+        ) {
             break;
-        }
-
-        if (page === searchMaxPages) {
-            searchComplete = false;
         }
     }
 
     return {
         items: matches,
-        totalCount: matches.length,
-        pagesScanned,
-        searchComplete
+        totalCount: matches.length
     };
 }
 
-async function mapWithConcurrency(items, concurrency, mapper) {
+function normalizeFacilityItem(item) {
+    return {
+        ...item,
+        parkgcd: firstText(
+            item?.parkgcd,
+            item?.parkGcd,
+            item?.parkGCd,
+            item?.pParkGCd
+        ),
+        parknm: firstText(
+            item?.parknm,
+            item?.parkNm,
+            item?.parkName,
+            item?.pkNam
+        ),
+        address: firstText(
+            item?.address,
+            item?.roadAddress,
+            item?.doroAddr,
+            item?.jibunAddr
+        )
+    };
+}
+
+async function mapWithConcurrency(items, concurrency, worker) {
     const results = new Array(items.length);
     let nextIndex = 0;
 
-    async function worker() {
+    async function consume() {
         while (true) {
-            const index = nextIndex++;
+            const index = nextIndex;
+            nextIndex += 1;
+
             if (index >= items.length) return;
-            results[index] = await mapper(items[index], index);
+
+            try {
+                results[index] = await worker(items[index], index);
+            } catch (error) {
+                results[index] = {
+                    available: false,
+                    status: "no-data",
+                    error: error?.message || "처리 실패",
+                    code: error?.code || "REALTIME_WORKER_ERROR"
+                };
+            }
         }
     }
 
-    const workers = Array.from(
-        { length: Math.min(concurrency, Math.max(items.length, 1)) },
-        () => worker()
+    const workerCount = Math.min(Math.max(1, concurrency), Math.max(1, items.length));
+    await Promise.all(
+        Array.from({ length: workerCount }, () => consume())
     );
 
-    await Promise.all(workers);
     return results;
 }
 
 function normalizeServiceKey(value) {
     if (!value) return "";
+
     const trimmed = String(value).trim();
+
     try {
         return decodeURIComponent(trimmed);
     } catch {
         return trimmed;
     }
+}
+
+function firstText(...values) {
+    for (const value of values) {
+        if (value !== undefined && value !== null && String(value).trim() !== "") {
+            return String(value).trim();
+        }
+    }
+    return "";
 }
 
 function positiveInt(value, fallback) {

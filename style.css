@@ -248,3 +248,23 @@ h1 {
         font-size: 21px;
     }
 }
+.parking-details {
+    margin: 18px 0 8px;
+    padding: 13px 14px;
+    background-color: #fafafa;
+    border: 1px solid #e7e7e7;
+    border-radius: 8px;
+}
+
+.parking-details p {
+    margin: 7px 0;
+    font-size: 13px;
+    line-height: 1.5;
+    color: #555;
+}
+
+.parking-details strong {
+    display: inline-block;
+    width: 70px;
+    color: #222;
+}

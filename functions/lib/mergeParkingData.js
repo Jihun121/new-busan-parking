@@ -1,17 +1,23 @@
-export function mergeParkingData({ basic = {}, realtime = {} }) {
-    const cityTotal = toNumberOrNull(basic.maxcnt);
-    const cityAvailable = toNumberOrNull(basic.curravacnt);
-    const cityCurrent = toNumberOrNull(basic.parkingcnt);
+export function mergeParkingData({
+    facility = {},
+    realtime = {},
+    basic = null
+}) {
+    const total = firstNumber(
+        realtime.maxcnt,
+        basic?.totalParkingCount,
+        facility?.maxcnt
+    );
 
-    const facilityTotal = toNumberOrNull(realtime.maxcnt);
-    const facilityAvailable = toNumberOrNull(realtime.curravacnt);
-    const facilityCurrent = toNumberOrNull(realtime.parkingcnt);
+    let current = firstNumber(
+        realtime.parkingcnt,
+        facility?.parkingcnt
+    );
 
-    const total = facilityTotal ?? cityTotal;
-
-    // 우선순위: 시설공단 실시간 → 부산시 실시간 → 계산값 → null
-    let current = facilityCurrent ?? cityCurrent;
-    let available = facilityAvailable ?? cityAvailable;
+    let available = firstNumber(
+        realtime.curravacnt,
+        facility?.curravacnt
+    );
 
     if (!Number.isFinite(current) && Number.isFinite(total) && Number.isFinite(available)) {
         current = Math.max(0, total - available);
@@ -21,56 +27,90 @@ export function mergeParkingData({ basic = {}, realtime = {} }) {
         available = Math.max(0, total - current);
     }
 
-    let status = "no-data";
-    let source = "none";
+    let realtimeSource = "none";
 
-    if (realtime.available === true && (Number.isFinite(current) || Number.isFinite(available))) {
-        status = "facility-realtime";
-        source = "부산시설공단_공영주차장 시설 현황 조회 서비스";
-    } else if (Number.isFinite(cityCurrent) || Number.isFinite(cityAvailable)) {
-        status = "city-realtime";
-        source = "부산광역시_공영주차장 정보 조회";
+    if (
+        realtime.available === true &&
+        (Number.isFinite(current) || Number.isFinite(available))
+    ) {
+        realtimeSource = "부산시설공단";
     } else if (Number.isFinite(current) || Number.isFinite(available)) {
-        status = "calculated";
-        source = "계산값";
+        realtimeSource = "API ② 제공값/계산값";
     }
 
     return {
-        ...basic,
-
-        parkgcd: basic.parkgcd ?? realtime.parkgcd ?? null,
-        parknm: basic.parknm ?? realtime.parknm ?? "",
+        parkgcd: firstText(facility.parkgcd, realtime.parkgcd),
+        parknm: firstText(facility.parknm, realtime.parknm),
 
         maxcnt: total,
         parkingcnt: current,
         curravacnt: available,
 
-        // 읽기 쉬운 별칭도 함께 제공합니다.
         totalParkingCount: total,
         currentParkingCount: current,
         availableParkingCount: available,
 
-        lastupdatetime:
-            realtime.lastupdatetime ??
-            basic.lastupdatetime ??
-            null,
+        lastupdatetime: realtime.lastupdatetime || null,
 
-        realtimeStatus: status,
-        realtimeSource: source,
-        realtimeMatched: realtime.matched === true,
-        realtimeError: realtime.error ?? null,
+        // API ③ 기본정보
+        basicInfoMatched: basic?.matched === true,
+        basicInfoMatchScore: basic?.matchScore ?? 0,
+        managementAgency: basic?.managementAgency || "",
+        address: basic?.address || "",
+        roadAddress: basic?.roadAddress || "",
+        lotAddress: basic?.lotAddress || "",
+        parkingType: basic?.parkingType || "",
+        latitude: basic?.latitude ?? null,
+        longitude: basic?.longitude ?? null,
+        baseTime: basic?.baseTime || "",
+        baseFee: basic?.baseFee || "",
+        addTime: basic?.addTime || "",
+        addFee: basic?.addFee || "",
+        dailyPassFee: basic?.dailyPassFee || "",
+        monthlyPassFee: basic?.monthlyPassFee || "",
+        operationStart: basic?.operationStart || "",
+        operationEnd: basic?.operationEnd || "",
+        notes: basic?.notes || "",
+
+        realtimeStatus:
+            realtime.available === true
+                ? "facility-realtime"
+                : (Number.isFinite(current) || Number.isFinite(available))
+                    ? "facility-realtime"
+                    : "no-data",
+
+        realtimeSource,
+        realtimeError: realtime.error || null,
 
         dataAvailability: {
             total: Number.isFinite(total),
             current: Number.isFinite(current),
             available: Number.isFinite(available),
-            realtime: status === "facility-realtime" || status === "city-realtime"
+            realtime: realtime.available === true,
+            basicInfo: basic?.matched === true
         }
     };
+}
+
+function firstNumber(...values) {
+    for (const value of values) {
+        const number = toNumberOrNull(value);
+        if (Number.isFinite(number)) return number;
+    }
+    return null;
 }
 
 function toNumberOrNull(value) {
     if (value === null || value === undefined || value === "") return null;
     const number = Number(String(value).replace(/,/g, "").trim());
     return Number.isFinite(number) ? number : null;
+}
+
+function firstText(...values) {
+    for (const value of values) {
+        if (value !== undefined && value !== null && String(value).trim() !== "") {
+            return String(value).trim();
+        }
+    }
+    return "";
 }

@@ -1,14 +1,16 @@
-const BUSAN_CITY_PARKING_URL =
-    "https://apis.data.go.kr/6260000/BusanPblcPrkngInfoService/getPblcPrkngInfo";
+const FACILITY_LIST_URL =
+    "https://apis.data.go.kr/B552587/ParkingInfoService_v2/getParkingList_v2";
 
-const DEFAULT_TIMEOUT_MS = 12000;
+const DEFAULT_TIMEOUT_MS = 8000;
 const DEFAULT_RETRIES = 1;
 
 /**
- * 부산광역시_공영주차장 정보 조회(15004683)
+ * API ①
+ * 부산시설공단 주차장 목록
  *
- * 공식 요청주소:
- * https://apis.data.go.kr/6260000/BusanPblcPrkngInfoService/getPblcPrkngInfo
+ * 역할:
+ * - parkgcd / parknm 목록 조회
+ * - API ②에서 사용할 parkgcd 확보
  */
 export async function fetchParkingList({
     serviceKey,
@@ -17,72 +19,75 @@ export async function fetchParkingList({
     timeoutMs = DEFAULT_TIMEOUT_MS,
     retries = DEFAULT_RETRIES
 }) {
-    const url = new URL(BUSAN_CITY_PARKING_URL);
+    if (!serviceKey) {
+        throw createError(
+            "부산시설공단 주차장 목록 API 인증키가 없습니다.",
+            "FACILITY_LIST_MISSING_KEY",
+            500
+        );
+    }
 
+    const url = new URL(FACILITY_LIST_URL);
     url.searchParams.set("serviceKey", serviceKey);
     url.searchParams.set("pageNo", String(pageNo));
     url.searchParams.set("numOfRows", String(numOfRows));
     url.searchParams.set("resultType", "json");
 
-    const { response, text } = await requestWithRetry({
-        url: url.toString(),
-        timeoutMs,
-        retries
-    });
-
-    if (!response.ok) {
-        throw createUpstreamError(
-            `부산광역시 공영주차장 API가 HTTP ${response.status}를 반환했습니다.`,
-            502,
-            "BUSAN_CITY_HTTP_ERROR",
-            {
-                upstreamStatus: response.status,
-                upstreamBody: text.slice(0, 1200)
-            }
-        );
-    }
-
-    const parsed = parsePayload(text, response.headers.get("content-type"));
-
-    if (parsed.resultCode && parsed.resultCode !== "00") {
-        throw createUpstreamError(
-            `부산광역시 공영주차장 API 오류 (${parsed.resultCode}): ${parsed.resultMsg || "알 수 없는 오류"}`,
-            502,
-            "BUSAN_CITY_API_ERROR",
-            {
-                upstreamCode: parsed.resultCode,
-                upstreamMessage: parsed.resultMsg || null
-            }
-        );
-    }
-
-    return {
-        items: parsed.items,
-        totalCount: Number(parsed.totalCount || 0),
-        pageNo: Number(parsed.pageNo || pageNo),
-        numOfRows: Number(parsed.numOfRows || numOfRows),
-        endpoint: BUSAN_CITY_PARKING_URL
-    };
-}
-
-async function requestWithRetry({ url, timeoutMs, retries }) {
     let lastError = null;
 
     for (let attempt = 0; attempt <= retries; attempt += 1) {
         try {
-            return await requestOnce(url, timeoutMs);
+            const { response, text } = await requestOnce(
+                url.toString(),
+                timeoutMs
+            );
+
+            if (!response.ok) {
+                throw createError(
+                    `부산시설공단 주차장 목록 API가 HTTP ${response.status}를 반환했습니다.`,
+                    "FACILITY_LIST_HTTP_ERROR",
+                    502,
+                    {
+                        upstreamStatus: response.status,
+                        upstreamBody: text.slice(0, 1200)
+                    }
+                );
+            }
+
+            const parsed = parsePayload(text, response.headers.get("content-type"));
+
+            if (parsed.resultCode && parsed.resultCode !== "00") {
+                throw createError(
+                    `부산시설공단 주차장 목록 API 오류 (${parsed.resultCode}): ${parsed.resultMsg || "알 수 없는 오류"}`,
+                    "FACILITY_LIST_API_ERROR",
+                    502,
+                    {
+                        upstreamCode: parsed.resultCode,
+                        upstreamMessage: parsed.resultMsg || null
+                    }
+                );
+            }
+
+            return {
+                items: parsed.items,
+                totalCount: Number(parsed.totalCount || parsed.items.length || 0),
+                pageNo: Number(parsed.pageNo || pageNo),
+                numOfRows: Number(parsed.numOfRows || numOfRows)
+            };
         } catch (error) {
             lastError = error;
 
             if (attempt >= retries || !isRetryable(error)) {
-                break;
+                throw error;
             }
-
-            await sleep(400 * (attempt + 1));
         }
     }
 
-    throw lastError || new Error("부산광역시 공영주차장 API 요청 실패");
+    throw lastError || createError(
+        "부산시설공단 주차장 목록 API 호출에 실패했습니다.",
+        "FACILITY_LIST_UNKNOWN_ERROR",
+        503
+    );
 }
 
 async function requestOnce(url, timeoutMs) {
@@ -93,7 +98,7 @@ async function requestOnce(url, timeoutMs) {
         const response = await fetch(url, {
             method: "GET",
             headers: {
-                Accept: "application/json, application/xml, text/xml;q=0.9, */*;q=0.8"
+                Accept: "application/json, application/xml;q=0.9, text/xml;q=0.8, */*;q=0.5"
             },
             signal: controller.signal
         });
@@ -102,38 +107,31 @@ async function requestOnce(url, timeoutMs) {
         return { response, text };
     } catch (error) {
         if (error?.name === "AbortError") {
-            throw createUpstreamError(
-                `부산광역시 공영주차장 API 응답 시간 초과 (${timeoutMs}ms)`,
-                503,
-                "BUSAN_CITY_TIMEOUT"
+            throw createError(
+                `부산시설공단 주차장 목록 API 응답 시간 초과 (${timeoutMs}ms)`,
+                "FACILITY_LIST_TIMEOUT",
+                503
             );
         }
 
-        throw createUpstreamError(
-            `부산광역시 공영주차장 API 연결 실패: ${error?.message || String(error)}`,
-            503,
-            "BUSAN_CITY_NETWORK_ERROR"
+        throw createError(
+            `부산시설공단 주차장 목록 API 연결 실패: ${error?.message || String(error)}`,
+            "FACILITY_LIST_NETWORK_ERROR",
+            503
         );
     } finally {
         clearTimeout(timer);
     }
 }
 
-function isRetryable(error) {
-    return [
-        "BUSAN_CITY_TIMEOUT",
-        "BUSAN_CITY_NETWORK_ERROR"
-    ].includes(error?.code);
-}
-
 function parsePayload(text, contentType = "") {
     const trimmed = String(text || "").trim();
 
     if (!trimmed) {
-        throw createUpstreamError(
-            "부산광역시 공영주차장 API가 빈 응답을 반환했습니다.",
-            502,
-            "BUSAN_CITY_EMPTY_RESPONSE"
+        throw createError(
+            "부산시설공단 주차장 목록 API가 빈 응답을 반환했습니다.",
+            "FACILITY_LIST_EMPTY_RESPONSE",
+            502
         );
     }
 
@@ -144,10 +142,10 @@ function parsePayload(text, contentType = "") {
     try {
         return parseJsonPayload(JSON.parse(trimmed));
     } catch (error) {
-        throw createUpstreamError(
-            `부산광역시 공영주차장 API JSON 파싱 실패: ${error?.message || String(error)}`,
+        throw createError(
+            `부산시설공단 주차장 목록 API JSON 파싱 실패: ${error?.message || String(error)}`,
+            "FACILITY_LIST_PARSE_ERROR",
             502,
-            "BUSAN_CITY_PARSE_ERROR",
             { upstreamBody: trimmed.slice(0, 1200) }
         );
     }
@@ -155,11 +153,9 @@ function parsePayload(text, contentType = "") {
 
 function parseJsonPayload(data) {
     const body = data?.response?.body;
-    let items = body?.items?.item || [];
+    let items = body?.items?.item ?? body?.item ?? data?.items?.item ?? data?.item ?? [];
 
-    if (!Array.isArray(items)) {
-        items = items ? [items] : [];
-    }
+    if (!Array.isArray(items)) items = items ? [items] : [];
 
     return {
         items: items.filter(Boolean),
@@ -171,17 +167,22 @@ function parseJsonPayload(data) {
             data?.response?.header?.resultMsg ??
             data?.resultMsg ??
             "OK",
-        totalCount: body?.totalCount ?? data?.totalCount,
-        pageNo: body?.pageNo ?? data?.pageNo,
-        numOfRows: body?.numOfRows ?? data?.numOfRows
+        totalCount:
+            body?.totalCount ??
+            data?.totalCount,
+        pageNo:
+            body?.pageNo ??
+            data?.pageNo,
+        numOfRows:
+            body?.numOfRows ??
+            data?.numOfRows
     };
 }
 
 function parseXmlPayload(xml) {
     const items = [];
-    const itemMatches = [...xml.matchAll(/<item(?:[^>]*)>([\s\S]*?)<\/item>/gi)];
 
-    for (const match of itemMatches) {
+    for (const match of xml.matchAll(/<item(?:[^>]*)>([\s\S]*?)<\/item>/gi)) {
         const item = {};
         const fieldRegex = /<([A-Za-z0-9_:-]+)(?:[^>]*)>([\s\S]*?)<\/\1>/g;
 
@@ -198,15 +199,9 @@ function parseXmlPayload(xml) {
         items,
         resultCode: firstXmlValue(xml, "resultCode") || "00",
         resultMsg: firstXmlValue(xml, "resultMsg") || "OK",
-        totalCount:
-            firstXmlValue(xml, "totalCount") ||
-            firstXmlValue(xml, "totalcount"),
-        pageNo:
-            firstXmlValue(xml, "pageNo") ||
-            firstXmlValue(xml, "pageno"),
-        numOfRows:
-            firstXmlValue(xml, "numOfRows") ||
-            firstXmlValue(xml, "numofrows")
+        totalCount: firstXmlValue(xml, "totalCount") || firstXmlValue(xml, "totalcount"),
+        pageNo: firstXmlValue(xml, "pageNo") || firstXmlValue(xml, "pageno"),
+        numOfRows: firstXmlValue(xml, "numOfRows") || firstXmlValue(xml, "numofrows")
     };
 }
 
@@ -230,14 +225,17 @@ function decodeXmlEntities(value) {
         .replace(/&#39;/g, "'");
 }
 
-function createUpstreamError(message, status, code, extra = {}) {
-    const error = new Error(message);
-    error.statusCode = status;
-    error.code = code;
-    Object.assign(error, extra);
-    return error;
+function isRetryable(error) {
+    return [
+        "FACILITY_LIST_TIMEOUT",
+        "FACILITY_LIST_NETWORK_ERROR"
+    ].includes(error?.code);
 }
 
-function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
+function createError(message, code, statusCode = 500, extra = {}) {
+    const error = new Error(message);
+    error.code = code;
+    error.statusCode = statusCode;
+    Object.assign(error, extra);
+    return error;
 }
