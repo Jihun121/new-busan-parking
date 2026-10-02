@@ -6,7 +6,7 @@ const DEFAULT_RETRIES = 0;
 const DEFAULT_ROWS = 100;
 const MEMORY_TTL_MS = 5 * 60 * 1000;
 const EDGE_CACHE_TTL_MS = 60 * 60 * 1000;
-const CACHE_NAME = "busan-parking-master-v9";
+const CACHE_NAME = "busan-parking-master-v11";
 const CACHE_KEY = new Request(
     "https://busan-parking-cache.invalid/facility-master-v9",
     { method: "GET" }

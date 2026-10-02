@@ -728,3 +728,47 @@ input:disabled {
         grid-template-columns: 1fr;
     }
 }
+
+.status-group {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 7px;
+    flex-wrap: wrap;
+}
+
+.freshness-badge {
+    display: inline-flex;
+    align-items: center;
+    min-height: 24px;
+    padding: 0 9px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+}
+
+.freshness-badge.fresh {
+    color: var(--green);
+    background: var(--green-soft);
+}
+
+.freshness-badge.fallback {
+    color: var(--yellow);
+    background: var(--yellow-soft);
+}
+
+.freshness-badge.stale {
+    color: var(--orange);
+    background: var(--orange-soft);
+}
+
+@media (max-width: 620px) {
+    .parking-card-header {
+        align-items: flex-start;
+    }
+
+    .status-group {
+        justify-content: flex-start;
+    }
+}

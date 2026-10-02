@@ -100,13 +100,17 @@ async function loadParkingData(pageNo, keyword = "", options = {}) {
 
         const data = JSON.parse(responseText);
 
+        sanitizeRealtimeItems(data);
+        saveFreshRealtimeSnapshots(data.items);
+        applyClientRealtimeFallback(data);
+
         currentPage = Number(data.pageNo) || pageNo;
         currentKeyword = data.keyword || keyword;
         totalCount = Number(data.totalCount) || 0;
         loadedItems = Array.isArray(data.items) ? data.items : [];
 
         saveLastSuccess(storageKey, data);
-        updateRefreshTime(data.meta?.warnings || []);
+        updateRefreshTime(data.meta?.warnings || [], countStaleItems(loadedItems));
 
         showSummary(totalCount, currentKeyword);
         renderCurrentItems();
@@ -122,6 +126,9 @@ async function loadParkingData(pageNo, keyword = "", options = {}) {
 
         if (fallback?.data && Array.isArray(fallback.data.items)) {
             const data = fallback.data;
+            sanitizeRealtimeItems(data);
+            markCachedPageStale(data, fallback.savedAt);
+
             currentPage = Number(data.pageNo) || pageNo;
             currentKeyword = data.keyword || keyword;
             totalCount = Number(data.totalCount) || 0;
@@ -177,6 +184,198 @@ function loadLastSuccess(key) {
     } catch {
         return null;
     }
+}
+
+const REALTIME_SNAPSHOT_PREFIX = "busanParking:realtime:v11:";
+const REALTIME_SNAPSHOT_TTL_MS = 60 * 60 * 1000;
+
+function makeRealtimeSnapshotKey(parking) {
+    const code = String(parking?.parkgcd || "").trim();
+    return code ? `${REALTIME_SNAPSHOT_PREFIX}${code}` : "";
+}
+
+function sanitizeRealtimeItems(data) {
+    if (!data || !Array.isArray(data.items)) return;
+
+    data.items.forEach(item => {
+        const total = normalizeNonNegative(item.totalParkingCount ?? item.maxcnt);
+        let current = normalizeAgainstTotal(item.currentParkingCount ?? item.parkingcnt, total);
+        let available = normalizeAgainstTotal(item.availableParkingCount ?? item.curravacnt, total);
+
+        if (!Number.isFinite(current) && Number.isFinite(total) && Number.isFinite(available)) {
+            current = Math.max(0, total - available);
+        }
+
+        if (!Number.isFinite(available) && Number.isFinite(total) && Number.isFinite(current)) {
+            available = Math.max(0, total - current);
+        }
+
+        if (
+            Number.isFinite(total) &&
+            Number.isFinite(current) &&
+            Number.isFinite(available) &&
+            current + available > total
+        ) {
+            available = Math.max(0, total - current);
+        }
+
+        item.totalParkingCount = total;
+        item.maxcnt = total;
+        item.currentParkingCount = current;
+        item.parkingcnt = current;
+        item.availableParkingCount = available;
+        item.curravacnt = available;
+    });
+}
+
+function saveFreshRealtimeSnapshots(items) {
+    if (!Array.isArray(items)) return;
+
+    for (const item of items) {
+        const key = makeRealtimeSnapshotKey(item);
+        if (!key) continue;
+        if (item.realtimeStale || item.dataFreshness === "stale" || item.realtimeStatus === "no-data") continue;
+
+        const total = normalizeNonNegative(item.totalParkingCount ?? item.maxcnt);
+        const current = normalizeAgainstTotal(item.currentParkingCount ?? item.parkingcnt, total);
+        const available = normalizeAgainstTotal(item.availableParkingCount ?? item.curravacnt, total);
+
+        if (!Number.isFinite(current) && !Number.isFinite(available)) continue;
+
+        try {
+            localStorage.setItem(key, JSON.stringify({
+                savedAt: Date.now(),
+                total,
+                current,
+                available,
+                lastupdatetime: item.lastupdatetime || null,
+                source: item.realtimeSource || "실시간"
+            }));
+        } catch {
+            // 브라우저 저장공간이 부족해도 앱의 실시간 조회는 계속 동작합니다.
+        }
+    }
+}
+
+function applyClientRealtimeFallback(data) {
+    if (!data || !Array.isArray(data.items)) return;
+
+    for (const item of data.items) {
+        let total = normalizeNonNegative(item.totalParkingCount ?? item.maxcnt);
+        let current = normalizeAgainstTotal(item.currentParkingCount ?? item.parkingcnt, total);
+        let available = normalizeAgainstTotal(item.availableParkingCount ?? item.curravacnt, total);
+
+        const key = makeRealtimeSnapshotKey(item);
+        let snapshot = null;
+
+        if (key && (
+            !Number.isFinite(current) ||
+            !Number.isFinite(available)
+        )) {
+            try {
+                const raw = localStorage.getItem(key);
+                if (raw) {
+                    const parsed = JSON.parse(raw);
+                    const savedAt = Number(parsed.savedAt || 0);
+                    if (savedAt && Date.now() - savedAt <= REALTIME_SNAPSHOT_TTL_MS) {
+                        snapshot = parsed;
+                    }
+                }
+            } catch {
+                snapshot = null;
+            }
+        }
+
+        if (snapshot) {
+            const snapshotTotal = normalizeNonNegative(snapshot.total);
+            if (!Number.isFinite(total)) total = snapshotTotal;
+
+            if (!Number.isFinite(current)) {
+                current = normalizeAgainstTotal(snapshot.current, total);
+            }
+
+            if (!Number.isFinite(available)) {
+                available = normalizeAgainstTotal(snapshot.available, total);
+            }
+
+            if (!Number.isFinite(current) && Number.isFinite(total) && Number.isFinite(available)) {
+                current = Math.max(0, total - available);
+            }
+
+            if (!Number.isFinite(available) && Number.isFinite(total) && Number.isFinite(current)) {
+                available = Math.max(0, total - current);
+            }
+
+            if (
+                Number.isFinite(total) &&
+                Number.isFinite(current) &&
+                Number.isFinite(available) &&
+                current + available > total
+            ) {
+                available = Math.max(0, total - current);
+            }
+
+            if (Number.isFinite(current) || Number.isFinite(available)) {
+                item.totalParkingCount = total;
+                item.maxcnt = total;
+                item.currentParkingCount = current;
+                item.parkingcnt = current;
+                item.availableParkingCount = available;
+                item.curravacnt = available;
+                item.realtimeStale = true;
+                item.dataFreshness = "stale";
+                item.realtimeStatus = "client-stale";
+                item.realtimeSource = "최근 정상 데이터";
+                item.realtimeCachedAt = snapshot.savedAt;
+                item.lastupdatetime = item.lastupdatetime || snapshot.lastupdatetime || null;
+                continue;
+            }
+        }
+
+        // 새 응답의 값 자체도 다시 정규화해 음수/범위 초과값이 화면에 남지 않게 합니다.
+        item.totalParkingCount = total;
+        item.maxcnt = total;
+        item.currentParkingCount = current;
+        item.parkingcnt = current;
+        item.availableParkingCount = available;
+    }
+}
+
+function markCachedPageStale(data, savedAt) {
+    if (!data || !Array.isArray(data.items)) return;
+
+    for (const item of data.items) {
+        const hasValue =
+            Number.isFinite(normalizeNonNegative(item.currentParkingCount ?? item.parkingcnt)) ||
+            Number.isFinite(normalizeNonNegative(item.availableParkingCount ?? item.curravacnt));
+
+        if (!hasValue) continue;
+
+        item.realtimeStale = true;
+        item.dataFreshness = "stale";
+        item.realtimeStatus = "client-stale";
+        item.realtimeSource = "최근 정상 데이터";
+        item.realtimeCachedAt = savedAt;
+    }
+}
+
+function countStaleItems(items) {
+    return Array.isArray(items)
+        ? items.filter(item => item?.realtimeStale === true).length
+        : 0;
+}
+
+function normalizeNonNegative(value) {
+    if (value === null || value === undefined || value === "") return null;
+    const number = Number(String(value).replace(/,/g, "").trim());
+    return Number.isFinite(number) && number >= 0 ? number : null;
+}
+
+function normalizeAgainstTotal(value, total) {
+    const number = normalizeNonNegative(value);
+    if (!Number.isFinite(number)) return null;
+    if (Number.isFinite(total) && number > total) return null;
+    return number;
 }
 function renderCurrentItems() {
     const filteredItems = filterItems(loadedItems);
@@ -316,9 +515,10 @@ function showParkingList(items) {
         const currentRaw = toNumber(parking.currentParkingCount ?? parking.parkingcnt);
         const status = getParkingStatus(availableRaw, totalRaw, currentRaw);
         const source = getRealtimeSourceText(parking);
+        const freshness = getFreshnessInfo(parking);
         const updateTime = parking.lastupdatetime
-            ? `데이터 갱신 : ${escapeHtml(String(parking.lastupdatetime))}`
-            : "데이터 갱신 : 정보 없음";
+            ? `${freshness.label} : ${escapeHtml(String(parking.lastupdatetime))}`
+            : freshness.label;
 
         const ratio = getAvailabilityRatio(availableRaw, totalRaw);
         const fillWidth = ratio === null ? 0 : Math.max(0, Math.min(100, ratio * 100));
@@ -329,7 +529,10 @@ function showParkingList(items) {
                     <h2>${name}</h2>
                     <p class="parking-code">주차장 코드 · ${code}</p>
                 </div>
-                <span class="status ${status.className}">${status.text}</span>
+                <div class="status-group">
+                    <span class="status ${status.className}">${status.text}</span>
+                    ${freshness.badge}
+                </div>
             </div>
 
             <div class="address-row">
@@ -551,13 +754,45 @@ function getRealtimeSourceText(parking) {
     switch (parking.realtimeStatus) {
         case "facility-realtime":
             return "실시간 출처 : 부산시설공단";
+        case "facility-realtime-stale":
+            return "실시간 출처 : 부산시설공단 · 최근 정상값";
         case "city-realtime":
             return "실시간 출처 : 부산광역시";
         case "calculated":
             return "주차현황 : 제공값으로 계산";
+        case "client-stale":
+            return "실시간 출처 : 최근 정상 데이터";
         default:
             return "실시간 주차정보 : 없음";
     }
+}
+
+function getFreshnessInfo(parking) {
+    if (parking?.realtimeStale === true || parking?.dataFreshness === "stale") {
+        return {
+            label: parking?.lastupdatetime ? "마지막 정상 데이터" : "최근 정상 데이터",
+            badge: '<span class="freshness-badge stale">잠시 이전 데이터</span>'
+        };
+    }
+
+    if (parking?.dataFreshness === "fallback") {
+        return {
+            label: parking?.lastupdatetime ? "데이터 갱신" : "데이터 기준",
+            badge: '<span class="freshness-badge fallback">보조 데이터</span>'
+        };
+    }
+
+    if (parking?.dataFreshness === "fresh") {
+        return {
+            label: "실시간 갱신",
+            badge: '<span class="freshness-badge fresh">실시간</span>'
+        };
+    }
+
+    return {
+        label: "데이터 갱신 : 정보 없음",
+        badge: ""
+    };
 }
 
 function displayNumber(value) {
@@ -584,16 +819,19 @@ function getTotalPages(totalCountValue = totalCount) {
     return Math.max(1, Math.ceil(Number(totalCountValue || 0) / rowsPerPage));
 }
 
-function updateRefreshTime(warnings = []) {
+function updateRefreshTime(warnings = [], staleCount = 0) {
     const now = new Date();
     const formatted = now.toLocaleTimeString("ko-KR", {
         hour: "2-digit",
         minute: "2-digit",
         second: "2-digit"
     });
-    lastRefresh.textContent = warnings.length
-        ? `마지막 갱신 ${formatted} · 일부 원본 API 지연`
-        : `마지막 갱신 ${formatted}`;
+
+    const parts = [`마지막 갱신 ${formatted}`];
+    if (warnings.length) parts.push("일부 원본 API 지연");
+    if (staleCount > 0) parts.push(`${staleCount}곳은 최근 정상 데이터`);
+
+    lastRefresh.textContent = parts.join(" · ");
 }
 
 function formatTime(timestamp) {

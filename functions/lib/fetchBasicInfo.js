@@ -5,7 +5,7 @@ const DEFAULT_TIMEOUT_MS = 5000;
 const DEFAULT_ROWS = 1000;
 const MEMORY_TTL_MS = 10 * 60 * 1000;
 const EDGE_CACHE_TTL_MS = 60 * 60 * 1000;
-const CACHE_NAME = "busan-parking-city-v9";
+const CACHE_NAME = "busan-parking-city-v11";
 const CACHE_KEY = new Request(
     "https://busan-parking-cache.invalid/city-basic-v9",
     { method: "GET" }
@@ -150,6 +150,7 @@ function toBasicRecord(item) {
         operationStart: firstText(item.svcSrtTe),
         operationEnd: firstText(item.svcEndTe),
         notes: firstText(item.spclNote),
+        lastupdatetime: firstText(item.lastupdatetime, item.lastUpdateTime, item.lastUpdate, item.updDt, item.updateTime),
         cityRecord: item
     };
 }

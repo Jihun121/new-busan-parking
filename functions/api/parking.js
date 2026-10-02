@@ -116,7 +116,15 @@ export async function onRequestGet(context) {
         const pageItems = searchedItems.slice(start, start + numOfRows);
 
         // API ③ 기본정보는 현재 화면에 필요한 항목만 매칭합니다.
-        const basicRecords = pageItems.map(item => matchBasicInline(item, cityResult?.records || []));
+        const basicRecords = pageItems.map(item => {
+            const matched = matchBasicInline(item, cityResult?.records || []);
+            if (!matched) return null;
+            return {
+                ...matched,
+                stale: Boolean(cityResult?.stale),
+                sourceStatus: cityResult?.stale ? "city-cache" : "city-live"
+            };
+        });
 
         // API ②는 현재 페이지에 보이는 주차장만 조회합니다.
         // 기존처럼 전체 50개를 매번 조회하지 않아서 호출량/대기시간을 크게 줄입니다.
