@@ -189,7 +189,7 @@ export async function onRequestGet(context) {
             items,
             meta: {
                 elapsedMs: Date.now() - startedAt,
-                forceRefresh,
+                forceRefresh: forceRealtime,
                 sourceMode,
                 warnings: [...new Set(warnings)],
                 api1: {
