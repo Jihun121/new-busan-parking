@@ -286,12 +286,19 @@ function showParkingList(items) {
 
         const name = escapeHtml(parking.parknm || "이름 없음");
         const code = escapeHtml(parking.parkgcd || "-");
-        const address = escapeHtml(
-            parking.address || parking.roadAddress || parking.lotAddress || "정보 없음"
-        );
+        const location = buildKakaoLocation(parking);
+        const address = escapeHtml(location.addressText || "정보 없음");
         const operation = formatOperation(parking.operationStart, parking.operationEnd);
         const fee = formatFee(parking);
         const coordinate = formatCoordinate(parking.latitude, parking.longitude);
+        const mapUrl = escapeHtml(location.mapUrl);
+        const directionsUrl = escapeHtml(location.directionsUrl);
+        const copyText = escapeHtml(location.copyText);
+        const locationMethod = escapeHtml(location.methodLabel);
+        const mapButtonText = location.hasCoordinates ? "📍 지도보기" : "📍 지도 검색";
+        const directionsButtonText = location.hasCoordinates ? "🚗 길찾기" : "🚗 길찾기 검색";
+        const copyButtonDisabled = location.copyText ? "" : " disabled";
+        const copyButtonText = location.copyText ? "📋 주소 복사" : "📋 주소 없음";
         const total = displayNumber(parking.totalParkingCount ?? parking.maxcnt);
         const current = displayNumber(parking.currentParkingCount ?? parking.parkingcnt);
         const available = displayNumber(parking.availableParkingCount ?? parking.curravacnt);
@@ -321,8 +328,19 @@ function showParkingList(items) {
                 <p><strong>운영시간</strong> ${operation}</p>
                 <p><strong>좌표</strong> ${coordinate}</p>
             </div>
+            <div class="parking-actions">
+                <a class="map-action-btn" href="${mapUrl}" target="_blank" rel="noopener noreferrer" title="${locationMethod} 기준으로 카카오맵을 엽니다.">${mapButtonText}</a>
+                <a class="map-action-btn" href="${directionsUrl}" target="_blank" rel="noopener noreferrer" title="${locationMethod} 기준으로 카카오맵 길찾기를 엽니다.">${directionsButtonText}</a>
+                <button class="map-action-btn copy-address-btn" type="button" data-copy-text="${copyText}"${copyButtonDisabled}>${copyButtonText}</button>
+            </div>
+            <p class="location-source">위치 안내 기준 · ${locationMethod}</p>
             <p class="update-time">${updateTime}</p>
             <p class="update-time source-time">${escapeHtml(source)}</p>`;
+
+        const copyButton = card.querySelector(".copy-address-btn");
+        copyButton.addEventListener("click", async () => {
+            await copyAddressToClipboard(copyButton, location.copyText);
+        });
 
         parkingList.appendChild(card);
     });
@@ -366,6 +384,119 @@ function formatCoordinate(latitude, longitude) {
     const lng = toNumber(longitude);
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return "정보 없음";
     return `${lat}, ${lng}`;
+}
+
+function buildKakaoLocation(parking) {
+    const name = String(parking?.parknm || "주차장").trim() || "주차장";
+    const lat = toNumber(parking?.latitude);
+    const lng = toNumber(parking?.longitude);
+    const hasCoordinates = isValidKoreaCoordinate(lat, lng);
+
+    const roadAddress = String(parking?.roadAddress || "").trim();
+    const lotAddress = String(parking?.lotAddress || "").trim();
+    const address = String(parking?.address || roadAddress || lotAddress || "").trim();
+
+    let query = "";
+    let addressText = address || roadAddress || lotAddress || "";
+    let methodLabel = "주차장명";
+
+    if (hasCoordinates) {
+        methodLabel = "좌표";
+        query = addressText || name;
+    } else if (roadAddress) {
+        methodLabel = "도로명주소";
+        query = roadAddress;
+        addressText = roadAddress;
+    } else if (lotAddress) {
+        methodLabel = "지번주소";
+        query = lotAddress;
+        addressText = lotAddress;
+    } else if (address) {
+        methodLabel = "주소";
+        query = address;
+    } else {
+        methodLabel = "주차장명";
+        query = name;
+        addressText = "주소 정보 없음";
+    }
+
+    let mapUrl;
+    let directionsUrl;
+
+    if (hasCoordinates) {
+        const safeName = encodeURIComponent(name);
+        mapUrl = `https://map.kakao.com/link/map/${safeName},${lat},${lng}`;
+        directionsUrl = `https://map.kakao.com/link/to/${safeName},${lat},${lng}`;
+    } else {
+        const safeQuery = encodeURIComponent(query);
+        mapUrl = `https://map.kakao.com/link/search/${safeQuery}`;
+        directionsUrl = `https://map.kakao.com/link/search/${safeQuery}`;
+    }
+
+    const copyText = roadAddress || lotAddress || address || "";
+
+    return {
+        hasCoordinates,
+        hasTarget: Boolean(query || hasCoordinates),
+        mapUrl,
+        directionsUrl,
+        copyText,
+        addressText,
+        methodLabel
+    };
+}
+
+function isValidKoreaCoordinate(latitude, longitude) {
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return false;
+
+    // 한국 주변의 일반적인 WGS84 범위를 벗어난 값은 좌표로 사용하지 않습니다.
+    return latitude >= 32 && latitude <= 39 && longitude >= 124 && longitude <= 132;
+}
+
+async function copyAddressToClipboard(button, text) {
+    const value = String(text || "").trim();
+    if (!value) return;
+
+    const originalText = button.textContent;
+
+    try {
+        if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(value);
+        } else {
+            fallbackCopyText(value);
+        }
+
+        button.textContent = "✓ 복사됨";
+        button.classList.add("copied");
+    } catch (error) {
+        try {
+            fallbackCopyText(value);
+            button.textContent = "✓ 복사됨";
+            button.classList.add("copied");
+        } catch {
+            button.textContent = "복사 실패";
+        }
+    }
+
+    window.setTimeout(() => {
+        button.textContent = originalText;
+        button.classList.remove("copied");
+    }, 1600);
+}
+
+function fallbackCopyText(text) {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.left = "-9999px";
+    document.body.appendChild(textarea);
+    textarea.select();
+
+    const copied = document.execCommand("copy");
+    textarea.remove();
+
+    if (!copied) throw new Error("클립보드 복사에 실패했습니다.");
 }
 
 function getParkingStatus(available, total, current) {

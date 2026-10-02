@@ -132,9 +132,9 @@ function toBasicRecord(item) {
     return {
         parknm: firstText(item.pkNam, item.parknm, item.parkNm, item.parkName),
         managementAgency: firstText(item.guNm),
-        roadAddress: firstText(item.doroAddr),
-        lotAddress: firstText(item.jibunAddr),
-        address: firstText(item.doroAddr, item.jibunAddr),
+        roadAddress: firstText(item.jibunAddr),
+        lotAddress: firstText(item.doroAddr),
+        address: firstText(item.jibunAddr, item.doroAddr),
         parkingType: firstText(item.pkFm),
         totalParkingCount: toNumberOrNull(item.pkCnt),
         currentParkingCount: toNumberOrNull(item.parkingcnt, item.currparkcnt, item.currCnt),

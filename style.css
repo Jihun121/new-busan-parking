@@ -284,6 +284,46 @@ input:disabled {
     color: #222;
 }
 
+.parking-actions {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin: 12px 0 4px;
+}
+
+.map-action-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 42px;
+    padding: 9px 10px;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    background: #fff;
+    color: #222;
+    text-decoration: none;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.map-action-btn:hover {
+    background: #f5f6f7;
+    border-color: #9ca3af;
+}
+
+.map-action-btn.copied {
+    background: #eef8f0;
+    border-color: #b9dec0;
+}
+
+.location-source {
+    margin: 6px 0 0;
+    font-size: 12px;
+    color: #8a8f98;
+}
+
 .update-time {
     margin: 12px 0 0;
     font-size: 13px;
@@ -361,6 +401,10 @@ input:disabled {
 }
 
 @media (max-width: 600px) {
+    .parking-actions {
+        grid-template-columns: 1fr;
+    }
+
     .container {
         padding: 20px 12px;
     }
