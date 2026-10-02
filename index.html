@@ -4,6 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#f6f8fb">
     <title>부산 공영주차장 현황</title>
     <link rel="stylesheet" href="style.css">
 </head>
@@ -11,20 +12,25 @@
 <body>
     <div class="container">
         <header class="page-header">
+            <div class="brand-mark" aria-hidden="true">P</div>
+            <div class="eyebrow">BUSAN PARKING</div>
             <h1>부산 공영주차장 현황</h1>
-            <p class="description">부산시설공단 실시간 주차현황 + 부산광역시 공영주차장 기본정보</p>
+            <p class="description">부산시설공단 실시간 주차현황과 부산광역시 기본정보를 한곳에서 확인하세요.</p>
         </header>
 
-        <section class="toolbar" aria-label="주차장 검색 및 정렬">
-            <div class="search-box">
+        <section class="toolbar" aria-label="주차장 검색 및 필터">
+            <form class="search-box" id="searchForm">
+                <label class="sr-only" for="searchInput">주차장 이름 또는 주소 검색</label>
+                <span class="search-icon" aria-hidden="true">⌕</span>
                 <input
-                    type="text"
+                    type="search"
                     id="searchInput"
-                    placeholder="주차장 이름 또는 주소 검색"
-                    autocomplete="off">
-                <button id="searchBtn">검색</button>
-                <button id="resetBtn" class="secondary-btn">전체보기</button>
-            </div>
+                    placeholder="주차장 이름 또는 주소를 검색하세요"
+                    autocomplete="off"
+                    spellcheck="false">
+                <button id="searchBtn" class="primary-btn" type="submit">검색</button>
+                <button id="resetBtn" class="ghost-btn" type="button">전체보기</button>
+            </form>
 
             <div class="control-row">
                 <div class="control-group">
@@ -47,25 +53,32 @@
                     </select>
                 </div>
 
-                <div class="control-actions">
-                    <button id="refreshBtn" class="refresh-btn">↻ 최신 정보 갱신</button>
-                </div>
+                <button id="refreshBtn" class="refresh-btn" type="button">
+                    <span aria-hidden="true">↻</span>
+                    <span class="refresh-label">최신 정보 갱신</span>
+                </button>
             </div>
         </section>
 
-        <section class="result-header">
-            <div id="summary"></div>
-            <div id="lastRefresh" class="last-refresh">아직 새로고침하지 않았습니다.</div>
+        <section class="result-header" aria-live="polite">
+            <div>
+                <div id="summary" class="summary-text">주차장 정보를 준비하고 있습니다.</div>
+                <div id="filterSummary" class="filter-summary"></div>
+            </div>
+            <div id="lastRefresh" class="last-refresh">데이터를 불러오는 중...</div>
         </section>
 
-        <p class="sort-note">검색·정렬·상태 필터는 현재 불러온 결과에 적용되며, 새로고침은 최신 주차현황을 다시 조회합니다.</p>
+        <div class="status-hint">
+            <span class="hint-dot" aria-hidden="true"></span>
+            <span>빈자리 기준으로 정렬하면 여유 있는 주차장을 빠르게 찾을 수 있습니다.</span>
+        </div>
 
         <main id="parkingList" class="parking-list" aria-live="polite"></main>
 
-        <div id="paging" class="paging">
-            <button id="prevBtn">이전</button>
-            <span id="pageInfo">1 / 1 페이지</span>
-            <button id="nextBtn">다음</button>
+        <div id="paging" class="paging" aria-label="주차장 목록 페이지 이동">
+            <button id="prevBtn" type="button" aria-label="이전 페이지">‹ 이전</button>
+            <span id="pageInfo">1 / 1</span>
+            <button id="nextBtn" type="button" aria-label="다음 페이지">다음 ›</button>
         </div>
     </div>
 

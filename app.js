@@ -6,6 +6,7 @@ const sortSelect = document.querySelector("#sortSelect");
 const statusFilter = document.querySelector("#statusFilter");
 const parkingList = document.querySelector("#parkingList");
 const summary = document.querySelector("#summary");
+const filterSummary = document.querySelector("#filterSummary");
 const lastRefresh = document.querySelector("#lastRefresh");
 const paging = document.querySelector("#paging");
 const prevBtn = document.querySelector("#prevBtn");
@@ -23,10 +24,9 @@ refreshBtn.addEventListener("click", () => {
     loadParkingData(currentPage, currentKeyword, { preserveView: true, forceRealtime: true });
 });
 
-searchBtn.addEventListener("click", searchParking);
-
-searchInput.addEventListener("keydown", event => {
-    if (event.key === "Enter") searchParking();
+document.querySelector("#searchForm").addEventListener("submit", event => {
+    event.preventDefault();
+    searchParking();
 });
 
 resetBtn.addEventListener("click", () => {
@@ -183,6 +183,7 @@ function renderCurrentItems() {
     const sortedItems = sortItems(filteredItems);
 
     updateVisibleSummary(filteredItems.length, loadedItems.length);
+    updateFilterSummary();
     showParkingList(sortedItems);
 }
 
@@ -257,6 +258,17 @@ function compareNullableNumbers(a, b) {
     return b - a;
 }
 
+function updateFilterSummary() {
+    const sortLabel = sortSelect.options[sortSelect.selectedIndex]?.text || "기본순";
+    const statusLabel = statusFilter.options[statusFilter.selectedIndex]?.text || "전체";
+    const parts = [];
+
+    if (sortSelect.value !== "default") parts.push(`정렬 · ${escapeHtml(sortLabel)}`);
+    if (statusFilter.value !== "all") parts.push(`상태 · ${escapeHtml(statusLabel)}`);
+
+    filterSummary.textContent = parts.join("  ·  ");
+}
+
 function showSummary(totalCountValue, keyword = "") {
     const safeKeyword = escapeHtml(keyword || "");
     const count = Number(totalCountValue) || 0;
@@ -290,13 +302,10 @@ function showParkingList(items) {
         const address = escapeHtml(location.addressText || "정보 없음");
         const operation = formatOperation(parking.operationStart, parking.operationEnd);
         const fee = formatFee(parking);
-        const coordinate = formatCoordinate(parking.latitude, parking.longitude);
         const mapUrl = escapeHtml(location.mapUrl);
-        const directionsUrl = escapeHtml(location.directionsUrl);
         const copyText = escapeHtml(location.copyText);
         const locationMethod = escapeHtml(location.methodLabel);
-        const mapButtonText = location.hasCoordinates ? "📍 지도보기" : "📍 지도 검색";
-        const directionsButtonText = location.hasCoordinates ? "🚗 길찾기" : "🚗 길찾기 검색";
+        const mapButtonText = "📍 카카오맵에서 보기";
         const copyButtonDisabled = location.copyText ? "" : " disabled";
         const copyButtonText = location.copyText ? "📋 주소 복사" : "📋 주소 없음";
         const total = displayNumber(parking.totalParkingCount ?? parking.maxcnt);
@@ -311,28 +320,49 @@ function showParkingList(items) {
             ? `데이터 갱신 : ${escapeHtml(String(parking.lastupdatetime))}`
             : "데이터 갱신 : 정보 없음";
 
+        const ratio = getAvailabilityRatio(availableRaw, totalRaw);
+        const fillWidth = ratio === null ? 0 : Math.max(0, Math.min(100, ratio * 100));
+
         card.innerHTML = `
             <div class="parking-card-header">
-                <h2>${name}</h2>
+                <div>
+                    <h2>${name}</h2>
+                    <p class="parking-code">주차장 코드 · ${code}</p>
+                </div>
                 <span class="status ${status.className}">${status.text}</span>
             </div>
-            <p class="parking-code">주차장 코드 : ${code}</p>
+
+            <div class="address-row">
+                <span class="address-icon" aria-hidden="true">📍</span>
+                <span class="address-text">${address}</span>
+            </div>
+
             <div class="parking-info">
-                <div class="available-box"><span>주차 가능</span><strong>${available}</strong></div>
-                <div><span>현재 주차</span><strong>${current}</strong></div>
-                <div><span>전체 주차면</span><strong>${total}</strong></div>
+                <div class="metric available">
+                    <span class="metric-label">주차 가능</span>
+                    <strong class="metric-value">${available}</strong>
+                    <div class="availability-bar" aria-hidden="true"><div class="availability-fill" style="width:${fillWidth}%"></div></div>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">현재 주차</span>
+                    <strong class="metric-value">${current}</strong>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">전체 주차면</span>
+                    <strong class="metric-value">${total}</strong>
+                </div>
             </div>
+
             <div class="parking-details">
-                <p><strong>주소</strong> ${address}</p>
-                <p><strong>요금</strong> ${fee}</p>
-                <p><strong>운영시간</strong> ${operation}</p>
-                <p><strong>좌표</strong> ${coordinate}</p>
+                <div class="detail-row"><span class="detail-label">요금</span><span class="detail-value">${fee}</span></div>
+                <div class="detail-row"><span class="detail-label">운영시간</span><span class="detail-value">${operation}</span></div>
             </div>
+
             <div class="parking-actions">
-                <a class="map-action-btn" href="${mapUrl}" target="_blank" rel="noopener noreferrer" title="${locationMethod} 기준으로 카카오맵을 엽니다.">${mapButtonText}</a>
-                <a class="map-action-btn" href="${directionsUrl}" target="_blank" rel="noopener noreferrer" title="${locationMethod} 기준으로 카카오맵 길찾기를 엽니다.">${directionsButtonText}</a>
-                <button class="map-action-btn copy-address-btn" type="button" data-copy-text="${copyText}"${copyButtonDisabled}>${copyButtonText}</button>
+                <a class="map-action-btn primary" href="${mapUrl}" target="_blank" rel="noopener noreferrer" title="${locationMethod} 기준으로 카카오맵을 엽니다.">${mapButtonText}</a>
+                <button class="map-action-btn copy-address-btn" type="button"${copyButtonDisabled}>${copyButtonText}</button>
             </div>
+
             <p class="location-source">위치 안내 기준 · ${locationMethod}</p>
             <p class="update-time">${updateTime}</p>
             <p class="update-time source-time">${escapeHtml(source)}</p>`;
@@ -421,16 +451,13 @@ function buildKakaoLocation(parking) {
     }
 
     let mapUrl;
-    let directionsUrl;
 
     if (hasCoordinates) {
         const safeName = encodeURIComponent(name);
         mapUrl = `https://map.kakao.com/link/map/${safeName},${lat},${lng}`;
-        directionsUrl = `https://map.kakao.com/link/to/${safeName},${lat},${lng}`;
     } else {
         const safeQuery = encodeURIComponent(query);
         mapUrl = `https://map.kakao.com/link/search/${safeQuery}`;
-        directionsUrl = `https://map.kakao.com/link/search/${safeQuery}`;
     }
 
     const copyText = roadAddress || lotAddress || address || "";
@@ -439,7 +466,6 @@ function buildKakaoLocation(parking) {
         hasCoordinates,
         hasTarget: Boolean(query || hasCoordinates),
         mapUrl,
-        directionsUrl,
         copyText,
         addressText,
         methodLabel
@@ -497,6 +523,11 @@ function fallbackCopyText(text) {
     textarea.remove();
 
     if (!copied) throw new Error("클립보드 복사에 실패했습니다.");
+}
+
+function getAvailabilityRatio(available, total) {
+    if (!Number.isFinite(available) || !Number.isFinite(total) || total <= 0) return null;
+    return available / total;
 }
 
 function getParkingStatus(available, total, current) {
