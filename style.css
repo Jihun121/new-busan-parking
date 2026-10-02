@@ -9,49 +9,49 @@ body {
     color: #222;
 }
 
+button,
+input,
+select {
+    font: inherit;
+}
+
 .container {
     max-width: 1250px;
     margin: 0 auto;
     padding: 30px 20px 50px;
 }
 
-h1 {
+.page-header {
     text-align: center;
+}
+
+h1 {
+    margin: 0 0 12px;
     font-size: 40px;
-    margin-bottom: 30px;
 }
 
 .description {
-    text-align: center;
+    margin: 0 0 30px;
     color: #666;
     font-size: 18px;
-    margin-bottom: 30px;
 }
 
-#loadBtn {
-    display: block;
-    margin: 0 auto 25px;
-    padding: 13px 25px;
-    font-size: 17px;
-    cursor: pointer;
-    background-color: white;
-    border: 1px solid #888;
-    border-radius: 5px;
-}
-
-#loadBtn:hover {
-    background-color: #eeeeee;
+.toolbar {
+    background: #fff;
+    padding: 18px;
+    border: 1px solid #e1e4e8;
+    border-radius: 14px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
 }
 
 .search-box {
     display: flex;
-    justify-content: center;
     gap: 10px;
-    margin: 25px 0 35px;
 }
 
 .search-box input {
-    width: 410px;
+    flex: 1;
+    min-width: 0;
     padding: 13px 15px;
     font-size: 17px;
     border: 1px solid #999;
@@ -63,26 +63,104 @@ h1 {
     border-color: #333;
 }
 
-.search-box button {
-    padding: 12px 20px;
-    font-size: 16px;
+.search-box button,
+.control-actions button,
+.control-group select,
+.paging button {
+    padding: 11px 16px;
     cursor: pointer;
     border: 1px solid #999;
-    border-radius: 6px;
+    border-radius: 7px;
     background-color: white;
 }
 
-.search-box button:hover {
+.search-box button:hover,
+.control-actions button:hover,
+.paging button:hover:not(:disabled) {
     background-color: #eeeeee;
 }
 
+.primary-btn {
+    background: #222 !important;
+    color: white;
+    border-color: #222 !important;
+}
+
+.primary-btn:hover {
+    background: #444 !important;
+}
+
+.refresh-btn {
+    font-weight: 700;
+}
+
+.secondary-btn {
+    white-space: nowrap;
+}
+
+.control-row {
+    display: flex;
+    align-items: end;
+    justify-content: space-between;
+    gap: 14px;
+    margin-top: 14px;
+}
+
+.control-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.control-group label {
+    font-size: 14px;
+    font-weight: 700;
+    color: #555;
+}
+
+.control-group select {
+    min-width: 150px;
+}
+
+.control-actions {
+    display: flex;
+    gap: 8px;
+    margin-left: auto;
+}
+
+button:disabled,
+select:disabled,
+input:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+}
+
+.result-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 15px;
+    margin: 20px 0 6px;
+}
+
 #summary {
-    margin: 20px 0;
     font-size: 20px;
 }
 
 #summary strong {
     font-size: 22px;
+}
+
+.last-refresh {
+    color: #777;
+    font-size: 14px;
+    white-space: nowrap;
+}
+
+.sort-note {
+    margin: 0 0 14px;
+    color: #888;
+    font-size: 13px;
 }
 
 .parking-list {
@@ -98,54 +176,70 @@ h1 {
 
 .parking-card {
     background-color: white;
-    padding: 24px;
+    padding: 22px;
     border-radius: 12px;
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+    border: 1px solid #e5e7eb;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.06);
+}
+
+.parking-card-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
 }
 
 .parking-card h2 {
-    margin-top: 0;
-    margin-bottom: 20px;
-    font-size: 23px;
+    margin: 0;
+    font-size: 22px;
+    line-height: 1.35;
 }
 
-.parking-card p {
-    color: #666;
-    font-size: 16px;
+.parking-code {
+    margin: 6px 0 0 !important;
+    color: #888 !important;
+    font-size: 13px !important;
 }
 
 .parking-info {
     display: flex;
-    gap: 15px;
-    margin: 30px 0 25px;
+    gap: 10px;
+    margin: 22px 0 16px;
 }
 
 .parking-info div {
     flex: 1;
     text-align: center;
     background-color: #f5f5f5;
-    padding: 15px 8px;
+    padding: 13px 8px;
+    border-radius: 8px;
+}
+
+.parking-info .available-box {
+    background: #eef8f0;
 }
 
 .parking-info span {
     display: block;
-    font-size: 14px;
+    font-size: 13px;
     color: #666;
-    margin-bottom: 7px;
+    margin-bottom: 6px;
 }
 
 .parking-info strong {
     display: block;
-    font-size: 25px;
-    color: #000;
+    font-size: 24px;
+    color: #111;
 }
 
 .status {
-    padding: 12px;
-    border-radius: 7px;
+    flex: 0 0 auto;
+    padding: 7px 10px;
+    border-radius: 999px;
     text-align: center;
-    font-size: 17px;
-    font-weight: bold;
+    font-size: 13px;
+    font-weight: 700;
+    white-space: nowrap;
 }
 
 .good {
@@ -169,87 +263,8 @@ h1 {
     color: #666;
 }
 
-.update-time {
-    margin-top: 20px;
-    font-size: 14px;
-    color: #777;
-}
-
-.paging {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    gap: 20px;
-    margin: 35px 0;
-}
-
-.paging button {
-    padding: 10px 20px;
-    font-size: 15px;
-    cursor: pointer;
-}
-
-.no-result,
-.error {
-    grid-column: 1 / -1;
-    text-align: center;
-    font-size: 18px;
-    padding: 40px;
-}
-
-.error {
-    color: red;
-}
-
-@media (max-width: 900px) {
-    .parking-list {
-        grid-template-columns: repeat(2, 1fr);
-    }
-
-    .parking-list.search-mode {
-        grid-template-columns: repeat(auto-fit, minmax(300px, 400px));
-    }
-}
-
-@media (max-width: 600px) {
-    .container {
-        padding: 20px 12px;
-    }
-
-    h1 {
-        font-size: 30px;
-    }
-
-    .description {
-        font-size: 15px;
-    }
-
-    .search-box {
-        flex-direction: column;
-    }
-
-    .search-box input {
-        width: 100%;
-    }
-
-    .parking-list {
-        grid-template-columns: 1fr;
-    }
-
-    .parking-list.search-mode {
-        grid-template-columns: 1fr;
-    }
-
-    .parking-info {
-        gap: 6px;
-    }
-
-    .parking-info strong {
-        font-size: 21px;
-    }
-}
 .parking-details {
-    margin: 18px 0 8px;
+    margin: 14px 0 8px;
     padding: 13px 14px;
     background-color: #fafafa;
     border: 1px solid #e7e7e7;
@@ -267,4 +282,147 @@ h1 {
     display: inline-block;
     width: 70px;
     color: #222;
+}
+
+.update-time {
+    margin: 12px 0 0;
+    font-size: 13px;
+    color: #777;
+}
+
+.source-time {
+    margin-top: 5px;
+    color: #999;
+}
+
+.loading,
+.empty-state,
+.no-result,
+.error {
+    grid-column: 1 / -1;
+    text-align: center;
+    padding: 48px 20px;
+}
+
+.empty-state {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    background: white;
+    border-radius: 12px;
+    border: 1px solid #e5e7eb;
+}
+
+.empty-state strong {
+    font-size: 19px;
+}
+
+.empty-state span {
+    color: #777;
+}
+
+.error {
+    color: #b00020;
+    background: #fff6f7;
+    border: 1px solid #f0c6cc;
+    border-radius: 10px;
+}
+
+.paging {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 20px;
+    margin: 35px 0;
+}
+
+.paging button:disabled {
+    opacity: 0.45;
+}
+
+@media (max-width: 900px) {
+    .parking-list {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .parking-list.search-mode {
+        grid-template-columns: repeat(auto-fit, minmax(300px, 400px));
+    }
+
+    .control-row {
+        flex-wrap: wrap;
+    }
+
+    .control-actions {
+        width: 100%;
+        margin-left: 0;
+        justify-content: flex-end;
+    }
+}
+
+@media (max-width: 600px) {
+    .container {
+        padding: 20px 12px;
+    }
+
+    h1 {
+        font-size: 30px;
+    }
+
+    .description {
+        font-size: 15px;
+    }
+
+    .search-box {
+        flex-wrap: wrap;
+    }
+
+    .search-box input {
+        width: 100%;
+        flex-basis: 100%;
+    }
+
+    .control-row,
+    .control-group {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .control-group,
+    .control-group select,
+    .control-actions,
+    .control-actions button {
+        width: 100%;
+    }
+
+    .control-actions {
+        flex-direction: row;
+    }
+
+    .parking-list,
+    .parking-list.search-mode {
+        grid-template-columns: 1fr;
+    }
+
+    .parking-card-header {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .parking-info {
+        gap: 6px;
+    }
+
+    .parking-info strong {
+        font-size: 21px;
+    }
+
+    .result-header {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .last-refresh {
+        white-space: normal;
+    }
 }

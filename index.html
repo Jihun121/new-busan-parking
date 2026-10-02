@@ -10,19 +10,66 @@
 
 <body>
     <div class="container">
-        <h1>부산 공영주차장 현황</h1>
-        <p class="description"> 부산시설공단 실시간 주차현황 + 부산광역시 공영주차장 기본정보 </p> <button id="loadBtn">주차장 정보 불러오기</button>
-        <div class="search-box">
-            <input type="text" id="searchInput" placeholder="주차장 이름을 입력하세요">
-            <button id="searchBtn">검색</button> <button id="resetBtn">전체보기</button>
-        </div>
-        <div id="summary"></div>
-        <div id="parkingList" class="parking-list"></div>
+        <header class="page-header">
+            <h1>부산 공영주차장 현황</h1>
+            <p class="description">부산시설공단 실시간 주차현황 + 부산광역시 공영주차장 기본정보</p>
+        </header>
+
+        <section class="toolbar" aria-label="주차장 검색 및 정렬">
+            <div class="search-box">
+                <input
+                    type="text"
+                    id="searchInput"
+                    placeholder="주차장 이름 또는 주소 검색"
+                    autocomplete="off">
+                <button id="searchBtn">검색</button>
+                <button id="resetBtn" class="secondary-btn">전체보기</button>
+            </div>
+
+            <div class="control-row">
+                <div class="control-group">
+                    <label for="sortSelect">정렬</label>
+                    <select id="sortSelect">
+                        <option value="default">기본순</option>
+                        <option value="available-desc">빈자리 많은 순</option>
+                        <option value="available-asc">빈자리 적은 순</option>
+                        <option value="name-asc">이름순</option>
+                    </select>
+                </div>
+
+                <div class="control-group">
+                    <label for="statusFilter">상태</label>
+                    <select id="statusFilter">
+                        <option value="all">전체</option>
+                        <option value="available">빈자리 있음</option>
+                        <option value="full">만차</option>
+                        <option value="unknown">정보 없음</option>
+                    </select>
+                </div>
+
+                <div class="control-actions">
+                    <button id="loadBtn" class="primary-btn">주차장 불러오기</button>
+                    <button id="refreshBtn" class="refresh-btn">↻ 새로고침</button>
+                </div>
+            </div>
+        </section>
+
+        <section class="result-header">
+            <div id="summary"></div>
+            <div id="lastRefresh" class="last-refresh">아직 새로고침하지 않았습니다.</div>
+        </section>
+
+        <p class="sort-note">정렬과 상태 필터는 현재 불러온 결과에 적용됩니다.</p>
+
+        <main id="parkingList" class="parking-list" aria-live="polite"></main>
+
         <div id="paging" class="paging">
-            <button id="prevBtn">이전</button> <span id="pageInfo">1 페이지</span>
+            <button id="prevBtn">이전</button>
+            <span id="pageInfo">1 / 1 페이지</span>
             <button id="nextBtn">다음</button>
         </div>
     </div>
+
     <script src="app.js"></script>
 </body>
 

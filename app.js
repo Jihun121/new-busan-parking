@@ -1,20 +1,34 @@
 const loadBtn = document.querySelector("#loadBtn");
+const refreshBtn = document.querySelector("#refreshBtn");
 const searchInput = document.querySelector("#searchInput");
 const searchBtn = document.querySelector("#searchBtn");
 const resetBtn = document.querySelector("#resetBtn");
+const sortSelect = document.querySelector("#sortSelect");
+const statusFilter = document.querySelector("#statusFilter");
 const parkingList = document.querySelector("#parkingList");
 const summary = document.querySelector("#summary");
+const lastRefresh = document.querySelector("#lastRefresh");
 const paging = document.querySelector("#paging");
 const prevBtn = document.querySelector("#prevBtn");
 const nextBtn = document.querySelector("#nextBtn");
 const pageInfo = document.querySelector("#pageInfo");
 
 let currentPage = 1;
+let currentKeyword = "";
+let totalCount = 0;
+let loadedItems = [];
+let isLoading = false;
 const rowsPerPage = 10;
 
 loadBtn.addEventListener("click", () => {
     searchInput.value = "";
-    loadParkingData(1);
+    currentKeyword = "";
+    currentPage = 1;
+    loadParkingData(1, "");
+});
+
+refreshBtn.addEventListener("click", () => {
+    loadParkingData(currentPage, currentKeyword, { preserveView: true });
 });
 
 searchBtn.addEventListener("click", searchParking);
@@ -25,29 +39,49 @@ searchInput.addEventListener("keydown", event => {
 
 resetBtn.addEventListener("click", () => {
     searchInput.value = "";
-    loadParkingData(1);
+    currentKeyword = "";
+    currentPage = 1;
+    loadParkingData(1, "");
 });
 
+sortSelect.addEventListener("change", () => renderCurrentItems());
+statusFilter.addEventListener("change", () => renderCurrentItems());
+
 prevBtn.addEventListener("click", () => {
-    if (currentPage > 1) loadParkingData(currentPage - 1);
+    if (isLoading || currentPage <= 1) return;
+    loadParkingData(currentPage - 1, currentKeyword, { preserveView: true });
 });
 
 nextBtn.addEventListener("click", () => {
-    loadParkingData(currentPage + 1);
+    if (isLoading) return;
+    const totalPages = getTotalPages();
+    if (currentPage >= totalPages) return;
+    loadParkingData(currentPage + 1, currentKeyword, { preserveView: true });
 });
 
 function searchParking() {
     const keyword = searchInput.value.trim();
+
     if (!keyword) {
-        alert("검색할 주차장 이름을 입력하세요.");
+        alert("검색할 주차장 이름 또는 주소를 입력하세요.");
         searchInput.focus();
         return;
     }
+
+    currentKeyword = keyword;
+    currentPage = 1;
     loadParkingData(1, keyword);
 }
 
-async function loadParkingData(pageNo, keyword = "") {
-    parkingList.innerHTML = "<p>주차장 정보를 불러오는 중입니다...</p>";
+async function loadParkingData(pageNo, keyword = "", options = {}) {
+    if (isLoading) return;
+
+    isLoading = true;
+    setLoadingState(true);
+
+    if (!options.preserveView || loadedItems.length === 0) {
+        parkingList.innerHTML = '<p class="loading">주차장 정보를 불러오는 중입니다...</p>';
+    }
 
     try {
         const params = new URLSearchParams();
@@ -55,7 +89,10 @@ async function loadParkingData(pageNo, keyword = "") {
         params.set("numOfRows", rowsPerPage);
         if (keyword) params.set("keyword", keyword);
 
-        const response = await fetch(`/api/parking?${params.toString()}`);
+        const response = await fetch(`/api/parking?${params.toString()}`, {
+            cache: "no-store"
+        });
+
         const responseText = await response.text();
 
         if (!response.ok) {
@@ -73,19 +110,24 @@ async function loadParkingData(pageNo, keyword = "") {
         }
 
         const data = JSON.parse(responseText);
-        currentPage = pageNo;
 
-        showSummary(data.totalCount, data.keyword);
-        showParkingList(data.items);
+        currentPage = Number(data.pageNo) || pageNo;
+        currentKeyword = data.keyword || keyword;
+        totalCount = Number(data.totalCount) || 0;
+        loadedItems = Array.isArray(data.items) ? data.items : [];
 
-        if (data.keyword) {
-            parkingList.classList.add("search-mode");
-            paging.style.display = "none";
+        if (!options.preserveView || !lastRefresh.textContent) {
+            updateRefreshTime();
         } else {
-            parkingList.classList.remove("search-mode");
-            paging.style.display = "flex";
-            updatePaging(data.totalCount);
+            updateRefreshTime();
         }
+
+        showSummary(totalCount, currentKeyword);
+        renderCurrentItems();
+        updatePaging(totalCount);
+
+        paging.style.display = currentKeyword ? "none" : "flex";
+        parkingList.classList.toggle("search-mode", Boolean(currentKeyword));
     } catch (error) {
         console.error(error);
         parkingList.innerHTML = `
@@ -93,14 +135,93 @@ async function loadParkingData(pageNo, keyword = "") {
                 주차장 정보를 불러오지 못했습니다.<br>
                 ${escapeHtml(error.message)}
             </p>`;
+    } finally {
+        isLoading = false;
+        setLoadingState(false);
     }
+}
+
+function renderCurrentItems() {
+    const filteredItems = filterItems(loadedItems);
+    const sortedItems = sortItems(filteredItems);
+
+    updateVisibleSummary(filteredItems.length, loadedItems.length);
+    showParkingList(sortedItems);
+}
+
+function filterItems(items) {
+    const filter = statusFilter.value;
+
+    if (filter === "all") return [...items];
+
+    return items.filter(parking => {
+        const status = getParkingStatus(
+            toNumber(parking.availableParkingCount ?? parking.curravacnt),
+            toNumber(parking.totalParkingCount ?? parking.maxcnt),
+            toNumber(parking.currentParkingCount ?? parking.parkingcnt)
+        );
+
+        if (filter === "available") {
+            return status.className !== "full" && status.className !== "unknown";
+        }
+
+        if (filter === "full") {
+            return status.className === "full";
+        }
+
+        if (filter === "unknown") {
+            return status.className === "unknown";
+        }
+
+        return true;
+    });
+}
+
+function sortItems(items) {
+    const sorted = [...items];
+    const mode = sortSelect.value;
+
+    if (mode === "available-desc") {
+        sorted.sort((a, b) => compareNullableNumbers(
+            toNumber(b.availableParkingCount ?? b.curravacnt),
+            toNumber(a.availableParkingCount ?? a.curravacnt)
+        ));
+    } else if (mode === "available-asc") {
+        sorted.sort((a, b) => compareNullableNumbers(
+            toNumber(b.availableParkingCount ?? b.curravacnt),
+            toNumber(a.availableParkingCount ?? a.curravacnt)
+        ) * -1);
+    } else if (mode === "name-asc") {
+        sorted.sort((a, b) => {
+            const aName = String(a.parknm || "").toLocaleLowerCase("ko-KR");
+            const bName = String(b.parknm || "").toLocaleLowerCase("ko-KR");
+            return aName.localeCompare(bName, "ko");
+        });
+    }
+
+    return sorted;
+}
+
+function compareNullableNumbers(a, b) {
+    const aFinite = Number.isFinite(a);
+    const bFinite = Number.isFinite(b);
+
+    if (!aFinite && !bFinite) return 0;
+    if (!aFinite) return 1;
+    if (!bFinite) return -1;
+
+    return b - a;
 }
 
 function showParkingList(items) {
     parkingList.innerHTML = "";
 
     if (!items || items.length === 0) {
-        parkingList.innerHTML = '<p class="no-result">검색된 주차장이 없습니다.</p>';
+        parkingList.innerHTML = `
+            <div class="empty-state">
+                <strong>${currentKeyword ? "검색 결과가 없습니다." : "표시할 주차장이 없습니다."}</strong>
+                <span>${currentKeyword ? "다른 주차장 이름이나 주소로 검색해보세요." : "조건을 변경하거나 새로고침해보세요."}</span>
+            </div>`;
         return;
     }
 
@@ -110,7 +231,9 @@ function showParkingList(items) {
 
         const name = escapeHtml(parking.parknm || "이름 없음");
         const code = escapeHtml(parking.parkgcd || "-");
-        const address = escapeHtml(parking.address || parking.roadAddress || parking.lotAddress || "정보 없음");
+        const address = escapeHtml(
+            parking.address || parking.roadAddress || parking.lotAddress || "정보 없음"
+        );
         const operation = formatOperation(parking.operationStart, parking.operationEnd);
         const fee = formatFee(parking);
         const coordinate = formatCoordinate(parking.latitude, parking.longitude);
@@ -123,18 +246,20 @@ function showParkingList(items) {
         const status = getParkingStatus(availableRaw, totalRaw, currentRaw);
         const source = getRealtimeSourceText(parking);
         const updateTime = parking.lastupdatetime
-            ? `갱신 : ${escapeHtml(String(parking.lastupdatetime))}`
-            : "갱신 : 정보 없음";
+            ? `데이터 갱신 : ${escapeHtml(String(parking.lastupdatetime))}`
+            : "데이터 갱신 : 정보 없음";
 
         card.innerHTML = `
-            <h2>${name}</h2>
-            <p>주차장 코드 : ${code}</p>
-            <div class="parking-info">
-                <div><span>전체 주차면</span><strong>${total}</strong></div>
-                <div><span>현재 주차</span><strong>${current}</strong></div>
-                <div><span>주차 가능</span><strong>${available}</strong></div>
+            <div class="parking-card-header">
+                <h2>${name}</h2>
+                <span class="status ${status.className}">${status.text}</span>
             </div>
-            <div class="status ${status.className}">${status.text}</div>
+            <p class="parking-code">주차장 코드 : ${code}</p>
+            <div class="parking-info">
+                <div class="available-box"><span>주차 가능</span><strong>${available}</strong></div>
+                <div><span>현재 주차</span><strong>${current}</strong></div>
+                <div><span>전체 주차면</span><strong>${total}</strong></div>
+            </div>
             <div class="parking-details">
                 <p><strong>주소</strong> ${address}</p>
                 <p><strong>요금</strong> ${fee}</p>
@@ -142,12 +267,23 @@ function showParkingList(items) {
                 <p><strong>좌표</strong> ${coordinate}</p>
             </div>
             <p class="update-time">${updateTime}</p>
-            <p class="update-time">${source}</p>`;
+            <p class="update-time source-time">${escapeHtml(source)}</p>`;
 
         parkingList.appendChild(card);
     });
 }
 
+function updateVisibleSummary(filteredCount, loadedCount) {
+    const extra = filteredCount !== loadedCount
+        ? ` · 현재 조건 ${filteredCount}곳`
+        : "";
+
+    const base = currentKeyword
+        ? `"<strong>${escapeHtml(currentKeyword)}</strong>" 검색 결과 <strong>${totalCount}</strong> 곳`
+        : `전체 공영주차장 <strong>${totalCount}</strong> 곳`;
+
+    summary.innerHTML = `${base}${extra}`;
+}
 
 function formatOperation(start, end) {
     const s = String(start || "").trim();
@@ -220,21 +356,36 @@ function toNumber(value) {
     return Number.isFinite(number) ? number : null;
 }
 
-function showSummary(totalCount, keyword) {
-    const safeKeyword = escapeHtml(keyword || "");
-
-    if (keyword) {
-        summary.innerHTML = `"<strong>${safeKeyword}</strong>" 검색 결과 <strong>${totalCount}</strong> 곳`;
-    } else {
-        summary.innerHTML = `전체 공영주차장 <strong>${totalCount}</strong> 곳`;
-    }
+function updatePaging(totalCountValue) {
+    const totalPages = getTotalPages(totalCountValue);
+    pageInfo.textContent = `${currentPage} / ${totalPages} 페이지`;
+    prevBtn.disabled = isLoading || currentPage <= 1;
+    nextBtn.disabled = isLoading || currentPage >= totalPages;
 }
 
-function updatePaging(totalCount) {
-    const totalPages = Math.max(1, Math.ceil(totalCount / rowsPerPage));
-    pageInfo.textContent = `${currentPage} / ${totalPages} 페이지`;
-    prevBtn.disabled = currentPage <= 1;
-    nextBtn.disabled = currentPage >= totalPages;
+function getTotalPages(totalCountValue = totalCount) {
+    return Math.max(1, Math.ceil(Number(totalCountValue || 0) / rowsPerPage));
+}
+
+function updateRefreshTime() {
+    const now = new Date();
+    const formatted = now.toLocaleTimeString("ko-KR", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit"
+    });
+    lastRefresh.textContent = `마지막 새로고침 ${formatted}`;
+}
+
+function setLoadingState(loading) {
+    loadBtn.disabled = loading;
+    refreshBtn.disabled = loading;
+    searchBtn.disabled = loading;
+    resetBtn.disabled = loading;
+    prevBtn.disabled = loading || currentPage <= 1;
+    nextBtn.disabled = loading || currentPage >= getTotalPages();
+
+    refreshBtn.textContent = loading ? "갱신 중..." : "↻ 새로고침";
 }
 
 function escapeHtml(value) {
@@ -245,3 +396,6 @@ function escapeHtml(value) {
         .replaceAll('"', "&quot;")
         .replaceAll("'", "&#39;");
 }
+
+// 처음 접속했을 때도 바로 주차장 목록을 보여줍니다.
+loadParkingData(1, "");

@@ -177,7 +177,17 @@ async function fetchFacilitySearch({ serviceKey, keyword, maxPages }) {
                 )
             );
 
-            if (name.includes(query)) {
+            const address = normalizeName(
+                firstText(
+                    item?.address,
+                    item?.roadAddress,
+                    item?.lotAddress,
+                    item?.doroAddr,
+                    item?.jibunAddr
+                )
+            );
+
+            if (name.includes(query) || address.includes(query)) {
                 matches.push(item);
             }
         }
