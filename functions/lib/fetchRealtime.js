@@ -151,7 +151,7 @@ async function fetchFacilityInfoByCode({
     };
 }
 
-async function fetchFacilityList({
+export async function fetchFacilityList({
     serviceKey,
     timeoutMs,
     retries
