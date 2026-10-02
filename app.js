@@ -183,8 +183,8 @@ function sortItems(items) {
 
     if (mode === "available-desc") {
         sorted.sort((a, b) => compareNullableNumbers(
-            toNumber(b.availableParkingCount ?? b.curravacnt),
-            toNumber(a.availableParkingCount ?? a.curravacnt)
+            toNumber(a.availableParkingCount ?? a.curravacnt),
+            toNumber(b.availableParkingCount ?? b.curravacnt)
         ));
     } else if (mode === "available-asc") {
         sorted.sort((a, b) => {
