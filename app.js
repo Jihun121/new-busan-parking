@@ -1,4 +1,3 @@
-const loadBtn = document.querySelector("#loadBtn");
 const refreshBtn = document.querySelector("#refreshBtn");
 const searchInput = document.querySelector("#searchInput");
 const searchBtn = document.querySelector("#searchBtn");
@@ -20,15 +19,8 @@ let loadedItems = [];
 let isLoading = false;
 const rowsPerPage = 10;
 
-loadBtn.addEventListener("click", () => {
-    searchInput.value = "";
-    currentKeyword = "";
-    currentPage = 1;
-    loadParkingData(1, "");
-});
-
 refreshBtn.addEventListener("click", () => {
-    loadParkingData(currentPage, currentKeyword, { preserveView: true });
+    loadParkingData(currentPage, currentKeyword, { preserveView: true, forceRealtime: true });
 });
 
 searchBtn.addEventListener("click", searchParking);
@@ -62,12 +54,6 @@ nextBtn.addEventListener("click", () => {
 function searchParking() {
     const keyword = searchInput.value.trim();
 
-    if (!keyword) {
-        alert("검색할 주차장 이름 또는 주소를 입력하세요.");
-        searchInput.focus();
-        return;
-    }
-
     currentKeyword = keyword;
     currentPage = 1;
     loadParkingData(1, keyword);
@@ -83,11 +69,14 @@ async function loadParkingData(pageNo, keyword = "", options = {}) {
         parkingList.innerHTML = '<p class="loading">주차장 정보를 불러오는 중입니다...</p>';
     }
 
+    const storageKey = makeStorageKey(pageNo, keyword);
+
     try {
         const params = new URLSearchParams();
         params.set("pageNo", pageNo);
         params.set("numOfRows", rowsPerPage);
         if (keyword) params.set("keyword", keyword);
+        if (options.forceRealtime) params.set("refresh", "1");
 
         const response = await fetch(`/api/parking?${params.toString()}`, {
             cache: "no-store"
@@ -116,31 +105,79 @@ async function loadParkingData(pageNo, keyword = "", options = {}) {
         totalCount = Number(data.totalCount) || 0;
         loadedItems = Array.isArray(data.items) ? data.items : [];
 
-        if (!options.preserveView || !lastRefresh.textContent) {
-            updateRefreshTime();
-        } else {
-            updateRefreshTime();
-        }
+        saveLastSuccess(storageKey, data);
+        updateRefreshTime(data.meta?.warnings || []);
 
         showSummary(totalCount, currentKeyword);
         renderCurrentItems();
         updatePaging(totalCount);
 
-        paging.style.display = currentKeyword ? "none" : "flex";
+        // 검색 결과도 캐시된 전체 목록 기준으로 서버에서 페이지를 나누므로 페이징을 유지합니다.
+        paging.style.display = "flex";
         parkingList.classList.toggle("search-mode", Boolean(currentKeyword));
     } catch (error) {
         console.error(error);
+
+        const fallback = loadLastSuccess(storageKey);
+
+        if (fallback?.data && Array.isArray(fallback.data.items)) {
+            const data = fallback.data;
+            currentPage = Number(data.pageNo) || pageNo;
+            currentKeyword = data.keyword || keyword;
+            totalCount = Number(data.totalCount) || 0;
+            loadedItems = data.items;
+
+            lastRefresh.textContent = `마지막 정상 데이터 ${formatTime(fallback.savedAt)} · 일시적 연결 지연`;
+            showSummary(totalCount, currentKeyword);
+            renderCurrentItems();
+            updatePaging(totalCount);
+            paging.style.display = "flex";
+            parkingList.classList.toggle("search-mode", Boolean(currentKeyword));
+            return;
+        }
+
         parkingList.innerHTML = `
-            <p class="error">
-                주차장 정보를 불러오지 못했습니다.<br>
-                ${escapeHtml(error.message)}
-            </p>`;
+            <div class="error">
+                <strong>최신 주차정보를 가져오지 못했습니다.</strong><br>
+                <span>${escapeHtml(error.message)}</span><br>
+                <small>잠시 후 <strong>새로고침</strong>을 다시 눌러주세요.</small>
+            </div>`;
     } finally {
         isLoading = false;
         setLoadingState(false);
     }
 }
 
+function makeStorageKey(pageNo, keyword) {
+    return `busanParking:last:${Number(pageNo) || 1}:${String(keyword || "").trim()}`;
+}
+
+function saveLastSuccess(key, data) {
+    try {
+        localStorage.setItem(key, JSON.stringify({
+            savedAt: Date.now(),
+            data
+        }));
+    } catch {
+        // 저장 공간/브라우저 제한은 서비스 동작과 무관하므로 무시합니다.
+    }
+}
+
+function loadLastSuccess(key) {
+    try {
+        const raw = localStorage.getItem(key);
+        if (!raw) return null;
+
+        const parsed = JSON.parse(raw);
+        if (!parsed?.data) return null;
+
+        // 30분 이상 지난 브라우저 캐시는 장애 fallback으로 사용하지 않습니다.
+        if (Date.now() - Number(parsed.savedAt || 0) > 30 * 60 * 1000) return null;
+        return parsed;
+    } catch {
+        return null;
+    }
+}
 function renderCurrentItems() {
     const filteredItems = filterItems(loadedItems);
     const sortedItems = sortItems(filteredItems);
@@ -385,25 +422,35 @@ function getTotalPages(totalCountValue = totalCount) {
     return Math.max(1, Math.ceil(Number(totalCountValue || 0) / rowsPerPage));
 }
 
-function updateRefreshTime() {
+function updateRefreshTime(warnings = []) {
     const now = new Date();
     const formatted = now.toLocaleTimeString("ko-KR", {
         hour: "2-digit",
         minute: "2-digit",
         second: "2-digit"
     });
-    lastRefresh.textContent = `마지막 새로고침 ${formatted}`;
+    lastRefresh.textContent = warnings.length
+        ? `마지막 갱신 ${formatted} · 일부 원본 API 지연`
+        : `마지막 갱신 ${formatted}`;
+}
+
+function formatTime(timestamp) {
+    const date = new Date(Number(timestamp) || Date.now());
+    return date.toLocaleTimeString("ko-KR", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit"
+    });
 }
 
 function setLoadingState(loading) {
-    loadBtn.disabled = loading;
     refreshBtn.disabled = loading;
     searchBtn.disabled = loading;
     resetBtn.disabled = loading;
     prevBtn.disabled = loading || currentPage <= 1;
     nextBtn.disabled = loading || currentPage >= getTotalPages();
 
-    refreshBtn.textContent = loading ? "갱신 중..." : "↻ 새로고침";
+    refreshBtn.textContent = loading ? "갱신 중..." : "↻ 최신 정보 갱신";
 }
 
 function escapeHtml(value) {
