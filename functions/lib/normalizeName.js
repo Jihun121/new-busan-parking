@@ -6,5 +6,6 @@ export function normalizeName(value) {
     return String(value)
         .trim()
         .toLowerCase()
-        .replace(/\s+/g, "");
+        .replace(/\s+/g, "")
+        .replace(/[()（）[\]{}]/g, "");
 }
