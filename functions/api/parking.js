@@ -6,10 +6,10 @@ import { mergeParkingData } from "../lib/mergeParkingData.js";
 
 const DEFAULT_ROWS = 10;
 const MAX_ROWS = 20;
-const FACILITY_LIST_TIMEOUT_MS = 15000;
+const FACILITY_LIST_TIMEOUT_MS = 12000;
 const CITY_TIMEOUT_MS = 5000;
-const REALTIME_TIMEOUT_MS = 5000;
-const REALTIME_CONCURRENCY = 4;
+const REALTIME_TIMEOUT_MS = 3200;
+const REALTIME_CONCURRENCY = 6;
 
 export async function onRequestGet(context) {
     const startedAt = Date.now();
@@ -141,7 +141,8 @@ export async function onRequestGet(context) {
                 ),
                 timeoutMs: REALTIME_TIMEOUT_MS,
                 retries: 0,
-                forceRefresh: forceRealtime
+                forceRefresh: forceRealtime,
+                waitUntil: context.waitUntil
             })
         );
 
@@ -161,6 +162,20 @@ export async function onRequestGet(context) {
             });
         });
 
+        // 다음 페이지의 실시간 데이터를 백그라운드에서 미리 준비합니다.
+        // 사용자가 [다음]을 누를 때 이미 캐시에 있으면 즉시 표시됩니다.
+        const nextPage = safePage < totalPages ? safePage + 1 : null;
+        if (nextPage && facilityServiceKey) {
+            const nextStart = (nextPage - 1) * numOfRows;
+            const nextItems = searchedItems.slice(nextStart, nextStart + numOfRows);
+            context.waitUntil(prefetchRealtimeItems({
+                serviceKey: facilityServiceKey,
+                items: nextItems,
+                timeoutMs: REALTIME_TIMEOUT_MS,
+                concurrency: REALTIME_CONCURRENCY
+            }));
+        }
+
         if (facilityResult?.warning) warnings.push(facilityResult.warning);
         if (cityResult?.stale) warnings.push("부산광역시 기본정보는 잠시 이전에 저장된 데이터를 사용 중입니다.");
         if (!cityResult?.ok && cityServiceKey) warnings.push("부산광역시 기본정보 API를 일시적으로 사용할 수 없습니다.");
@@ -174,6 +189,7 @@ export async function onRequestGet(context) {
             items,
             meta: {
                 elapsedMs: Date.now() - startedAt,
+                forceRefresh,
                 sourceMode,
                 warnings: [...new Set(warnings)],
                 api1: {
@@ -283,6 +299,27 @@ function normalizeAddress(value) {
         .trim();
 }
 
+async function prefetchRealtimeItems({ serviceKey, items, timeoutMs, concurrency }) {
+    if (!serviceKey || !Array.isArray(items) || items.length === 0) return;
+
+    await mapWithConcurrency(
+        items,
+        concurrency,
+        parking => fetchRealtime({
+            serviceKey,
+            parkgcd: firstText(
+                parking?.parkgcd,
+                parking?.parkGcd,
+                parking?.parkGCd,
+                parking?.pParkGCd
+            ),
+            timeoutMs,
+            retries: 0,
+            forceRefresh: false
+        })
+    );
+}
+
 async function mapWithConcurrency(items, concurrency, worker) {
     const results = new Array(items.length);
     let nextIndex = 0;
@@ -350,11 +387,16 @@ function createError(message, code, statusCode = 500, extra = {}) {
 }
 
 function jsonResponse(data, status = 200) {
+    const forceRefresh = Boolean(data?.meta?.forceRefresh);
+    const cacheControl = status === 200 && !forceRefresh
+        ? "public, max-age=5, s-maxage=10"
+        : "no-store";
+
     return new Response(JSON.stringify(data, null, 2), {
         status,
         headers: {
             "Content-Type": "application/json; charset=utf-8",
-            "Cache-Control": "no-store"
+            "Cache-Control": cacheControl
         }
     });
 }

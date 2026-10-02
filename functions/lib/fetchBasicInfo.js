@@ -5,9 +5,9 @@ const DEFAULT_TIMEOUT_MS = 5000;
 const DEFAULT_ROWS = 1000;
 const MEMORY_TTL_MS = 10 * 60 * 1000;
 const EDGE_CACHE_TTL_MS = 60 * 60 * 1000;
-const CACHE_NAME = "busan-parking-city-v11";
+const CACHE_NAME = "busan-parking-city-v12";
 const CACHE_KEY = new Request(
-    "https://busan-parking-cache.invalid/city-basic-v9",
+    "https://busan-parking-cache.invalid/city-basic-v12",
     { method: "GET" }
 );
 

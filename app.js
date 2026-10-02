@@ -41,14 +41,18 @@ statusFilter.addEventListener("change", () => renderCurrentItems());
 
 prevBtn.addEventListener("click", () => {
     if (isLoading || currentPage <= 1) return;
-    loadParkingData(currentPage - 1, currentKeyword, { preserveView: true });
+    const targetPage = currentPage - 1;
+    showStoredPageInstantly(targetPage, currentKeyword);
+    loadParkingData(targetPage, currentKeyword, { preserveView: true, backgroundUpdate: true });
 });
 
 nextBtn.addEventListener("click", () => {
     if (isLoading) return;
     const totalPages = getTotalPages();
     if (currentPage >= totalPages) return;
-    loadParkingData(currentPage + 1, currentKeyword, { preserveView: true });
+    const targetPage = currentPage + 1;
+    showStoredPageInstantly(targetPage, currentKeyword);
+    loadParkingData(targetPage, currentKeyword, { preserveView: true, backgroundUpdate: true });
 });
 
 function searchParking() {
@@ -57,6 +61,29 @@ function searchParking() {
     currentKeyword = keyword;
     currentPage = 1;
     loadParkingData(1, keyword);
+}
+
+function showStoredPageInstantly(pageNo, keyword) {
+    const key = makeStorageKey(pageNo, keyword);
+    const cached = loadLastSuccess(key);
+    if (!cached?.data || !Array.isArray(cached.data.items)) return false;
+
+    const data = cached.data;
+    sanitizeRealtimeItems(data);
+    markCachedPageStale(data, cached.savedAt);
+
+    currentPage = Number(data.pageNo) || pageNo;
+    currentKeyword = data.keyword || keyword;
+    totalCount = Number(data.totalCount) || 0;
+    loadedItems = data.items;
+
+    lastRefresh.textContent = `마지막 정상 데이터 ${formatTime(cached.savedAt)} · 최신 데이터 확인 중`;
+    showSummary(totalCount, currentKeyword);
+    renderCurrentItems();
+    updatePaging(totalCount);
+    paging.style.display = "flex";
+    parkingList.classList.toggle("search-mode", Boolean(currentKeyword));
+    return true;
 }
 
 async function loadParkingData(pageNo, keyword = "", options = {}) {
@@ -79,7 +106,7 @@ async function loadParkingData(pageNo, keyword = "", options = {}) {
         if (options.forceRealtime) params.set("refresh", "1");
 
         const response = await fetch(`/api/parking?${params.toString()}`, {
-            cache: "no-store"
+            cache: options.forceRealtime ? "no-store" : "default"
         });
 
         const responseText = await response.text();
@@ -186,7 +213,7 @@ function loadLastSuccess(key) {
     }
 }
 
-const REALTIME_SNAPSHOT_PREFIX = "busanParking:realtime:v11:";
+const REALTIME_SNAPSHOT_PREFIX = "busanParking:realtime:v12:";
 const REALTIME_SNAPSHOT_TTL_MS = 60 * 60 * 1000;
 
 function makeRealtimeSnapshotKey(parking) {

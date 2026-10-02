@@ -6,9 +6,9 @@ const DEFAULT_RETRIES = 0;
 const DEFAULT_ROWS = 100;
 const MEMORY_TTL_MS = 5 * 60 * 1000;
 const EDGE_CACHE_TTL_MS = 60 * 60 * 1000;
-const CACHE_NAME = "busan-parking-master-v11";
+const CACHE_NAME = "busan-parking-master-v12";
 const CACHE_KEY = new Request(
-    "https://busan-parking-cache.invalid/facility-master-v9",
+    "https://busan-parking-cache.invalid/facility-master-v12",
     { method: "GET" }
 );
 
@@ -71,25 +71,45 @@ export async function fetchFacilityMasterList({
 
         let items = result.items || [];
 
-        // 100개보다 더 많은 경우에만 추가 페이지를 최대 5회 가져옵니다.
-        // 추가 페이지가 실패해도 이미 받은 목록은 유지합니다.
+        // 100개보다 더 많은 경우 추가 페이지를 병렬 3개까지 조회합니다.
+        // 초기 목록 캐시가 비어 있을 때 첫 화면까지 걸리는 시간을 줄입니다.
         const totalCount = Number(result.totalCount || items.length);
         const maxPages = Math.min(5, Math.ceil(totalCount / DEFAULT_ROWS));
+        const extraPages = [];
 
         for (let page = 2; page <= maxPages; page += 1) {
-            try {
-                const extra = await fetchParkingList({
-                    serviceKey,
-                    pageNo: page,
-                    numOfRows: DEFAULT_ROWS,
-                    timeoutMs,
-                    retries: 0
-                });
-                items = items.concat(extra.items || []);
-            } catch (error) {
-                console.warn(`시설공단 주차장 목록 ${page}페이지 조회 생략:`, error?.message);
-                break;
+            extraPages.push(page);
+        }
+
+        let cursor = 0;
+        const pageResults = new Array(extraPages.length);
+
+        async function consumePage() {
+            while (true) {
+                const index = cursor++;
+                if (index >= extraPages.length) return;
+                const page = extraPages[index];
+                try {
+                    pageResults[index] = await fetchParkingList({
+                        serviceKey,
+                        pageNo: page,
+                        numOfRows: DEFAULT_ROWS,
+                        timeoutMs,
+                        retries: 0
+                    });
+                } catch (error) {
+                    console.warn(`시설공단 주차장 목록 ${page}페이지 조회 생략:`, error?.message);
+                    pageResults[index] = null;
+                }
             }
+        }
+
+        await Promise.all(
+            Array.from({ length: Math.min(3, extraPages.length) }, () => consumePage())
+        );
+
+        for (const extra of pageResults) {
+            if (extra?.items?.length) items = items.concat(extra.items);
         }
 
         const payload = {
