@@ -7,5 +7,6 @@ export function normalizeName(value) {
         .trim()
         .toLowerCase()
         .replace(/\s+/g, "")
-        .replace(/[()（）[\]{}]/g, "");
+        .replace(/[()（）[\]{}]/g, "")
+        .replace(/[·ㆍ]/g, "");
 }

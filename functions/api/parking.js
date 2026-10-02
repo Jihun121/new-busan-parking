@@ -1,19 +1,22 @@
 import { fetchParkingList } from "../lib/fetchParkingList.js";
-import { fetchRealtime } from "../lib/fetchRealtime.js";
+import { fetchRealtime, fetchFacilityList } from "../lib/fetchRealtime.js";
 import { fetchBasicInfo } from "../lib/fetchBasicInfo.js";
 import { normalizeName } from "../lib/normalizeName.js";
 import { mergeParkingData } from "../lib/mergeParkingData.js";
 
 const DEFAULT_ROWS = 10;
-const MAX_ROWS = 100;
-const DEFAULT_CONCURRENCY = 5;
-const DEFAULT_SEARCH_PAGES = 10;
+const MAX_ROWS = 50;
+const SEARCH_PAGE_SIZE = 100;
+const DEFAULT_SEARCH_MAX_PAGES = 10;
+const DEFAULT_CONCURRENCY = 3;
 
 export async function onRequestGet(context) {
     const startedAt = Date.now();
 
     try {
-        let serviceKey = context.env.BUSAN_API_KEY;
+        const serviceKey = normalizeServiceKey(
+            context.env.BUSAN_API_KEY
+        );
 
         if (!serviceKey) {
             return jsonResponse({
@@ -22,7 +25,9 @@ export async function onRequestGet(context) {
             }, 500);
         }
 
-        serviceKey = normalizeServiceKey(serviceKey);
+        const facilityServiceKey = normalizeServiceKey(
+            context.env.BUSAN_FACILITY_API_KEY || serviceKey
+        );
 
         const requestUrl = new URL(context.request.url);
         const pageNo = positiveInt(
@@ -41,40 +46,34 @@ export async function onRequestGet(context) {
             requestUrl.searchParams.get("keyword") || ""
         ).trim();
 
-        const sidoCd = context.env.BUSAN_SIDO_CODE || "26";
-        const realtimeUrl = context.env.BUSAN_REALTIME_API_URL || "";
         const concurrency = clamp(
             positiveInt(
                 context.env.BUSAN_REALTIME_CONCURRENCY,
                 DEFAULT_CONCURRENCY
             ),
             1,
-            10
+            5
         );
+
         const searchMaxPages = clamp(
             positiveInt(
                 context.env.BUSAN_SEARCH_MAX_PAGES,
-                DEFAULT_SEARCH_PAGES
+                DEFAULT_SEARCH_MAX_PAGES
             ),
             1,
             20
         );
 
-        // 일반 목록: 요청 페이지 1개만 조회
-        // 검색: 부산 전체를 무제한으로 긁지 않도록 최대 N페이지까지 탐색
         const listResult = keyword
             ? await fetchSearchResults({
                 serviceKey,
                 keyword,
-                sidoCd,
-                pageSize: MAX_ROWS,
-                maxPages: searchMaxPages
+                searchMaxPages
             })
             : await fetchParkingList({
                 serviceKey,
                 pageNo,
-                numOfRows,
-                sidoCd
+                numOfRows
             });
 
         let items = listResult.items || [];
@@ -83,11 +82,19 @@ export async function onRequestGet(context) {
             const normalizedKeyword = normalizeName(keyword);
             items = items.filter(item =>
                 normalizeName(
-                    item?.parknm ??
-                    item?.prk_plce_nm
+                    item?.pkNam ?? item?.parknm
                 ).includes(normalizedKeyword)
             );
         }
+
+        // 시설공단 목록은 요청마다 한 번만 조회합니다.
+        // 부산광역시 관리번호와 시설공단 주차장 코드가 다른 경우에도
+        // 주차장명으로 매칭할 수 있도록 전체 목록을 색인으로 사용합니다.
+        const facilityItems = await fetchFacilityList({
+            serviceKey: facilityServiceKey,
+            timeoutMs: 8000,
+            retries: 0
+        });
 
         const parkingData = await mapWithConcurrency(
             items,
@@ -95,14 +102,16 @@ export async function onRequestGet(context) {
             async parking => {
                 const basic = await fetchBasicInfo({ parking });
 
-                // 실시간 URL을 설정하지 않은 경우 네트워크 요청을 하지 않습니다.
                 const realtime = await fetchRealtime({
-                    serviceKey,
+                    serviceKey: facilityServiceKey,
                     parking: basic,
-                    realtimeUrl
+                    facilityItems
                 });
 
-                return mergeParkingData({ basic, realtime });
+                return mergeParkingData({
+                    basic,
+                    realtime
+                });
             }
         );
 
@@ -115,15 +124,18 @@ export async function onRequestGet(context) {
             keyword,
             items: parkingData,
             meta: {
-                source: listResult.endpoint,
+                sources: [
+                    "부산광역시_공영주차장 정보 조회",
+                    "부산시설공단_공영주차장 시설 현황 조회 서비스"
+                ],
                 elapsedMs: Date.now() - startedAt,
-                realtimeEnabled: Boolean(realtimeUrl),
                 searchComplete: keyword
                     ? listResult.searchComplete
                     : true,
                 searchPagesScanned: keyword
                     ? listResult.pagesScanned
-                    : 1
+                    : 1,
+                facilityRealtimeEnabled: true
             }
         });
     } catch (error) {
@@ -158,9 +170,7 @@ export async function onRequestGet(context) {
 async function fetchSearchResults({
     serviceKey,
     keyword,
-    sidoCd,
-    pageSize,
-    maxPages
+    searchMaxPages
 }) {
     const normalizedKeyword = normalizeName(keyword);
     const matches = [];
@@ -168,12 +178,11 @@ async function fetchSearchResults({
     let pagesScanned = 0;
     let searchComplete = true;
 
-    for (let page = 1; page <= maxPages; page += 1) {
+    for (let page = 1; page <= searchMaxPages; page += 1) {
         const result = await fetchParkingList({
             serviceKey,
             pageNo: page,
-            numOfRows: pageSize,
-            sidoCd
+            numOfRows: SEARCH_PAGE_SIZE
         });
 
         pagesScanned = page;
@@ -181,8 +190,7 @@ async function fetchSearchResults({
 
         for (const item of result.items || []) {
             const name = normalizeName(
-                item?.parknm ??
-                item?.prk_plce_nm
+                item?.pkNam ?? item?.parknm
             );
 
             if (name.includes(normalizedKeyword)) {
@@ -190,16 +198,14 @@ async function fetchSearchResults({
             }
         }
 
-        const loadedThrough = page * pageSize;
-
         if (
-            loadedThrough >= totalCount ||
+            page * SEARCH_PAGE_SIZE >= totalCount ||
             (result.items || []).length === 0
         ) {
             break;
         }
 
-        if (page === maxPages) {
+        if (page === searchMaxPages) {
             searchComplete = false;
         }
     }
@@ -208,8 +214,7 @@ async function fetchSearchResults({
         items: matches,
         totalCount: matches.length,
         pagesScanned,
-        searchComplete,
-        endpoint: "https://apis.data.go.kr/B553881/Parking/PrkSttusInfo"
+        searchComplete
     };
 }
 
@@ -240,6 +245,10 @@ async function mapWithConcurrency(items, concurrency, mapper) {
 }
 
 function normalizeServiceKey(value) {
+    if (!value) {
+        return "";
+    }
+
     const trimmed = String(value).trim();
 
     try {

@@ -1,307 +1,258 @@
-const DEFAULT_TIMEOUT_MS = 8000;
+const FACILITY_PARKING_LIST_URL =
+    "https://apis.data.go.kr/B552587/ParkingInfoService_v2/getParkingList_v2";
+
+const FACILITY_PARKING_INFO_URL =
+    "https://apis.data.go.kr/B552587/ParkingInfoService_v2/getParkingInfoList_v2";
+
+const DEFAULT_TIMEOUT_MS = 10000;
+const DEFAULT_RETRIES = 1;
 
 /**
- * 실시간 주차정보를 선택적으로 조회합니다.
+ * 부산시설공단_공영주차장 시설 현황 조회 서비스(15157490)
  *
- * 현재 한국교통안전공단 공개 문서에서 확인되는 시설/위치 API와
- * 기존 실시간 엔드포인트는 서로 다르므로, 실시간 URL은 환경변수로 주입합니다.
- * URL이 비어 있으면 외부 호출 자체를 하지 않고 '미연계' 상태로 반환합니다.
- *
- * Cloudflare Pages 환경변수:
- * BUSAN_REALTIME_API_URL=<실시간 API URL>
- *
- * URL에 {parkgcd}가 있으면 주차장 코드로 치환하고,
- * 그렇지 않으면 기존 API 호환용으로 pParkGCd 쿼리 파라미터를 추가합니다.
+ * 여기서는 기존 프로젝트에서 실제 사용하던 B552587 ParkingInfoService_v2
+ * 엔드포인트를 유지하고, 부산광역시 API에서 받은 관리번호/주차장명과
+ * 시설공단 실시간 데이터를 병합합니다.
  */
 export async function fetchRealtime({
     serviceKey,
     parking,
-    realtimeUrl = "",
-    timeoutMs = DEFAULT_TIMEOUT_MS
+    facilityItems = null,
+    timeoutMs = DEFAULT_TIMEOUT_MS,
+    retries = DEFAULT_RETRIES
 }) {
-    const parkgcd = parking?.parkgcd ?? parking?.prk_center_id ?? null;
+    const parkgcd =
+        parking?.parkgcd ??
+        parking?.mgntNum ??
+        null;
 
-    if (!realtimeUrl) {
-        return {
-            available: false,
-            parkgcd,
-            parknm: parking?.parknm || "",
-            status: "unavailable",
-            reason: "BUSAN_REALTIME_API_URL이 설정되지 않았습니다."
-        };
-    }
+    const parknm = parking?.parknm || "";
 
     if (!serviceKey) {
-        return {
-            available: false,
-            parkgcd,
-            parknm: parking?.parknm || "",
-            status: "error",
-            error: "실시간 API 인증키가 없습니다."
-        };
+        return unavailable(parkgcd, parknm, "시설공단 API 인증키가 없습니다.");
     }
-
-    if (!parkgcd) {
-        return {
-            available: false,
-            parkgcd: null,
-            parknm: parking?.parknm || "",
-            status: "error",
-            error: "주차장 코드가 없습니다."
-        };
-    }
-
-    const url = buildRealtimeUrl(realtimeUrl, serviceKey, parkgcd);
-
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
-        const response = await fetch(url.toString(), {
-            method: "GET",
-            headers: {
-                "Accept": "application/json, application/xml, text/xml;q=0.9, */*;q=0.8"
-            },
-            signal: controller.signal
-        });
+        let code = parkgcd;
 
-        const text = await response.text();
+        // 부산광역시 관리번호와 시설공단 코드가 다를 수 있으므로
+        // 우선 관리번호를 사용하고, 조회 실패 시 이름 검색으로 보완합니다.
+        let info = null;
 
-        if (!response.ok) {
-            return {
-                available: false,
-                parkgcd,
-                parknm: parking?.parknm || "",
-                status: "error",
-                error: mapRealtimeHttpError(response.status),
-                detail: text.slice(0, 1000)
-            };
+        if (code) {
+            info = await fetchFacilityInfoByCode({
+                serviceKey,
+                parkgcd: code,
+                timeoutMs,
+                retries
+            });
         }
 
-        const parsed = parseRealtimePayload(text);
+        if (!info && parknm) {
+            const candidates = facilityItems || await fetchFacilityList({
+                serviceKey,
+                timeoutMs,
+                retries
+            });
 
-        if (parsed.errorCode && parsed.errorCode !== "00") {
-            return {
-                available: false,
-                parkgcd,
-                parknm: parking?.parknm || "",
-                status: "error",
-                error: `실시간 API 오류 (${parsed.errorCode}): ${parsed.errorMessage || "알 수 없는 오류"}`
-            };
+            const target = normalizeName(parknm);
+            const matched = candidates.find(item =>
+                normalizeName(item.parknm || item.parkNm || "") === target
+            ) || candidates.find(item =>
+                normalizeName(item.parknm || item.parkNm || "").includes(target) ||
+                target.includes(normalizeName(item.parknm || item.parkNm || ""))
+            );
+
+            if (matched?.parkgcd) {
+                info = await fetchFacilityInfoByCode({
+                    serviceKey,
+                    parkgcd: matched.parkgcd,
+                    timeoutMs,
+                    retries
+                });
+            }
         }
-
-        const info = pickRealtimeItem(parsed.items, parkgcd);
 
         if (!info) {
-            return {
-                available: false,
+            return unavailable(
                 parkgcd,
-                parknm: parking?.parknm || "",
-                status: "no-data",
-                reason: "실시간 정보가 없습니다."
-            };
+                parknm,
+                "부산시설공단 실시간 정보가 없습니다."
+            );
         }
 
         return {
             available: true,
-            parkgcd:
-                info.parkgcd ??
-                info.prk_center_id ??
-                parkgcd,
-            parknm:
-                info.parknm ??
-                info.prk_plce_nm ??
-                parking?.parknm ??
-                "",
-            maxcnt: toNumberOrNull(
-                info.maxcnt ??
-                info.prk_cmprt_co
-            ),
-            parkingcnt: toNumberOrNull(
-                info.parkingcnt ??
-                info.currparkcnt ??
-                info.currentParkingCount
-            ),
-            curravacnt: toNumberOrNull(
-                info.curravacnt ??
-                info.availableSpaces ??
-                info.remainCnt
-            ),
-            lastupdatetime:
-                info.lastupdatetime ??
-                info.lastUpdateTime ??
-                info.updateTime ??
-                null,
-            status: "ok"
+            status: "ok",
+            parkgcd: info.parkgcd ?? parkgcd,
+            parknm: info.parknm ?? parknm,
+            maxcnt: toNumberOrNull(info.maxcnt),
+            parkingcnt: toNumberOrNull(info.parkingcnt),
+            curravacnt: toNumberOrNull(info.curravacnt),
+            lastupdatetime: info.lastupdatetime ?? null
         };
     } catch (error) {
-        if (error?.name === "AbortError") {
-            return {
-                available: false,
-                parkgcd,
-                parknm: parking?.parknm || "",
-                status: "timeout",
-                error: `실시간 API 응답 시간 초과 (${timeoutMs}ms)`
-            };
-        }
-
         return {
             available: false,
+            status: error?.code === "FACILITY_TIMEOUT" ? "timeout" : "error",
             parkgcd,
-            parknm: parking?.parknm || "",
-            status: "error",
-            error: error?.message || "실시간 API 연결 실패"
+            parknm,
+            error: error?.message || "부산시설공단 API 연결 실패"
         };
-    } finally {
-        clearTimeout(timer);
     }
 }
 
-function buildRealtimeUrl(rawUrl, serviceKey, parkgcd) {
-    const template = String(rawUrl).replace(
-        "{parkgcd}",
-        encodeURIComponent(String(parkgcd))
-    );
+async function fetchFacilityInfoByCode({
+    serviceKey,
+    parkgcd,
+    timeoutMs,
+    retries
+}) {
+    const url = new URL(FACILITY_PARKING_INFO_URL);
+    url.searchParams.set("serviceKey", serviceKey);
+    url.searchParams.set("pageNo", "1");
+    url.searchParams.set("numOfRows", "10");
+    url.searchParams.set("pParkGCd", String(parkgcd));
+    url.searchParams.set("resultType", "json");
 
-    const url = new URL(template);
+    const { response, text } = await requestWithRetry({
+        url: url.toString(),
+        timeoutMs,
+        retries
+    });
 
-    if (!url.searchParams.has("serviceKey")) {
-        url.searchParams.set("serviceKey", serviceKey);
+    if (!response.ok) {
+        return null;
     }
 
-    if (!url.searchParams.has("pParkGCd")) {
-        url.searchParams.set("pParkGCd", parkgcd);
+    const data = parseJson(text);
+    const code = data?.response?.header?.resultCode;
+
+    if (code && code !== "00") {
+        return null;
     }
 
-    if (!url.searchParams.has("pageNo")) {
-        url.searchParams.set("pageNo", "1");
+    let item = data?.response?.body?.items?.item;
+    if (Array.isArray(item)) {
+        item = item[0];
     }
 
-    if (!url.searchParams.has("numOfRows")) {
-        url.searchParams.set("numOfRows", "10");
+    if (!item) {
+        return null;
     }
 
-    if (!url.searchParams.has("resultType") && !url.searchParams.has("format")) {
-        url.searchParams.set("resultType", "json");
-    }
-
-    if (url.searchParams.has("format") && !url.searchParams.get("format")) {
-        url.searchParams.set("format", "2");
-    }
-
-    return url;
+    return {
+        parkgcd: item.parkgcd,
+        parknm: item.parknm,
+        maxcnt: item.maxcnt,
+        parkingcnt: item.parkingcnt,
+        curravacnt: item.curravacnt,
+        lastupdatetime: item.lastupdatetime
+    };
 }
 
-function parseRealtimePayload(text) {
-    const trimmed = String(text || "").trim();
+async function fetchFacilityList({
+    serviceKey,
+    timeoutMs,
+    retries
+}) {
+    const url = new URL(FACILITY_PARKING_LIST_URL);
+    url.searchParams.set("serviceKey", serviceKey);
+    url.searchParams.set("pageNo", "1");
+    url.searchParams.set("numOfRows", "100");
+    url.searchParams.set("resultType", "json");
 
-    if (!trimmed) {
-        return { items: [], errorCode: "00", errorMessage: null };
+    const { response, text } = await requestWithRetry({
+        url: url.toString(),
+        timeoutMs,
+        retries
+    });
+
+    if (!response.ok) {
+        return [];
     }
 
-    if (trimmed.startsWith("<")) {
-        return parseXmlPayload(trimmed);
-    }
-
-    let data;
-    try {
-        data = JSON.parse(trimmed);
-    } catch (error) {
-        return {
-            items: [],
-            errorCode: "PARSE",
-            errorMessage: `실시간 API JSON 파싱 실패: ${error?.message || String(error)}`
-        };
-    }
-
-    let items =
-        data?.response?.body?.items?.item ??
-        data?.items?.item ??
-        data?.items ??
-        data?.PrkSttusInfo ??
-        [];
+    const data = parseJson(text);
+    let items = data?.response?.body?.items?.item || [];
 
     if (!Array.isArray(items)) {
         items = items ? [items] : [];
     }
 
-    return {
-        items,
-        errorCode:
-            data?.response?.header?.resultCode ??
-            data?.resultCode ??
-            "00",
-        errorMessage:
-            data?.response?.header?.resultMsg ??
-            data?.resultMsg ??
-            null
-    };
+    return items;
 }
 
-function parseXmlPayload(xml) {
-    const errorCode = firstXmlValue(xml, "resultCode") || "00";
-    const errorMessage = firstXmlValue(xml, "resultMsg");
-    const matches = [
-        ...xml.matchAll(/<item(?:[^>]*)>([\s\S]*?)<\/item>/gi),
-        ...xml.matchAll(/<PrkSttusInfo(?:[^>]*)>([\s\S]*?)<\/PrkSttusInfo>/gi)
-    ];
+async function requestWithRetry({ url, timeoutMs, retries }) {
+    let lastError = null;
 
-    const items = matches.map(match => {
-        const object = {};
-        const fieldRegex = /<([A-Za-z0-9_:-]+)(?:[^>]*)>([\s\S]*?)<\/\1>/g;
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+        try {
+            return await requestOnce(url, timeoutMs);
+        } catch (error) {
+            lastError = error;
 
-        for (const field of match[1].matchAll(fieldRegex)) {
-            object[field[1]] = decodeXmlEntities(
-                String(field[2]).replace(/<[^>]+>/g, "").trim()
+            if (attempt >= retries || ![
+                "FACILITY_TIMEOUT",
+                "FACILITY_NETWORK_ERROR"
+            ].includes(error?.code)) {
+                break;
+            }
+
+            await sleep(400 * (attempt + 1));
+        }
+    }
+
+    throw lastError || new Error("부산시설공단 API 요청 실패");
+}
+
+async function requestOnce(url, timeoutMs) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+        const response = await fetch(url, {
+            method: "GET",
+            headers: {
+                Accept: "application/json, application/xml, text/xml;q=0.9, */*;q=0.8"
+            },
+            signal: controller.signal
+        });
+
+        const text = await response.text();
+        return { response, text };
+    } catch (error) {
+        if (error?.name === "AbortError") {
+            const timeoutError = new Error(
+                `부산시설공단 실시간 API 응답 시간 초과 (${timeoutMs}ms)`
             );
+            timeoutError.code = "FACILITY_TIMEOUT";
+            throw timeoutError;
         }
 
-        return object;
-    });
-
-    return { items, errorCode, errorMessage };
+        const networkError = new Error(
+            `부산시설공단 실시간 API 연결 실패: ${error?.message || String(error)}`
+        );
+        networkError.code = "FACILITY_NETWORK_ERROR";
+        throw networkError;
+    } finally {
+        clearTimeout(timer);
+    }
 }
 
-function firstXmlValue(xml, tagName) {
-    const match = xml.match(
-        new RegExp(`<${tagName}[^>]*>([\\s\\S]*?)<\\/${tagName}>`, "i")
-    );
-
-    return match
-        ? decodeXmlEntities(String(match[1]).replace(/<[^>]+>/g, "").trim())
-        : null;
+function parseJson(text) {
+    try {
+        return JSON.parse(text);
+    } catch {
+        return {};
+    }
 }
 
-function decodeXmlEntities(value) {
+function normalizeName(value) {
     return String(value || "")
-        .replace(/&amp;/g, "&")
-        .replace(/&lt;/g, "<")
-        .replace(/&gt;/g, ">")
-        .replace(/&quot;/g, '"')
-        .replace(/&apos;/g, "'")
-        .replace(/&#39;/g, "'");
-}
-
-function pickRealtimeItem(items, parkgcd) {
-    if (!items?.length) {
-        return null;
-    }
-
-    return items.find(item =>
-        String(item?.parkgcd ?? item?.prk_center_id ?? "") === String(parkgcd)
-    ) || items[0];
-}
-
-function mapRealtimeHttpError(status) {
-    if (status === 522) {
-        return "실시간 API 연결이 끊겼습니다(522).";
-    }
-
-    if (status === 504) {
-        return "실시간 API 응답 시간이 초과되었습니다(504).";
-    }
-
-    return `실시간 API HTTP ${status}`;
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, "")
+        .replace(/[()（）[\]{}]/g, "");
 }
 
 function toNumberOrNull(value) {
@@ -309,6 +260,20 @@ function toNumberOrNull(value) {
         return null;
     }
 
-    const number = Number(value);
+    const number = Number(String(value).replace(/,/g, ""));
     return Number.isFinite(number) ? number : null;
+}
+
+function unavailable(parkgcd, parknm, reason) {
+    return {
+        available: false,
+        status: "unavailable",
+        parkgcd,
+        parknm,
+        reason
+    };
+}
+
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
 }
