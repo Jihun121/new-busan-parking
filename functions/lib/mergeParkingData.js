@@ -1,53 +1,76 @@
 export function mergeParkingData({ basic = {}, realtime = {} }) {
-    const merged = {
+    const cityTotal = toNumberOrNull(basic.maxcnt);
+    const cityAvailable = toNumberOrNull(basic.curravacnt);
+    const cityCurrent = toNumberOrNull(basic.parkingcnt);
+
+    const facilityTotal = toNumberOrNull(realtime.maxcnt);
+    const facilityAvailable = toNumberOrNull(realtime.curravacnt);
+    const facilityCurrent = toNumberOrNull(realtime.parkingcnt);
+
+    const total = facilityTotal ?? cityTotal;
+
+    // 우선순위: 시설공단 실시간 → 부산시 실시간 → 계산값 → null
+    let current = facilityCurrent ?? cityCurrent;
+    let available = facilityAvailable ?? cityAvailable;
+
+    if (!Number.isFinite(current) && Number.isFinite(total) && Number.isFinite(available)) {
+        current = Math.max(0, total - available);
+    }
+
+    if (!Number.isFinite(available) && Number.isFinite(total) && Number.isFinite(current)) {
+        available = Math.max(0, total - current);
+    }
+
+    let status = "no-data";
+    let source = "none";
+
+    if (realtime.available === true && (Number.isFinite(current) || Number.isFinite(available))) {
+        status = "facility-realtime";
+        source = "부산시설공단_공영주차장 시설 현황 조회 서비스";
+    } else if (Number.isFinite(cityCurrent) || Number.isFinite(cityAvailable)) {
+        status = "city-realtime";
+        source = "부산광역시_공영주차장 정보 조회";
+    } else if (Number.isFinite(current) || Number.isFinite(available)) {
+        status = "calculated";
+        source = "계산값";
+    }
+
+    return {
         ...basic,
+
         parkgcd: basic.parkgcd ?? realtime.parkgcd ?? null,
         parknm: basic.parknm ?? realtime.parknm ?? "",
-        maxcnt: toNumberOrNull(basic.maxcnt),
-        parkingcnt: toNumberOrNull(basic.parkingcnt),
-        curravacnt: toNumberOrNull(basic.curravacnt),
-        lastupdatetime: basic.lastupdatetime ?? null
-    };
 
-    if (realtime.available === true) {
-        merged.parkgcd = realtime.parkgcd ?? merged.parkgcd;
-        merged.parknm = realtime.parknm ?? merged.parknm;
-        merged.maxcnt = toNumberOrNull(realtime.maxcnt) ?? merged.maxcnt;
-        merged.parkingcnt = toNumberOrNull(realtime.parkingcnt) ?? merged.parkingcnt;
-        merged.curravacnt =
-            toNumberOrNull(realtime.curravacnt) ??
-            merged.curravacnt;
-        merged.lastupdatetime =
+        maxcnt: total,
+        parkingcnt: current,
+        curravacnt: available,
+
+        // 읽기 쉬운 별칭도 함께 제공합니다.
+        totalParkingCount: total,
+        currentParkingCount: current,
+        availableParkingCount: available,
+
+        lastupdatetime:
             realtime.lastupdatetime ??
-            merged.lastupdatetime;
-        merged.realtimeStatus = "ok";
-        merged.realtimeSource = "busan-facility";
-    } else {
-        // 부산광역시 API의 currava(실시간주차면수)는 시설공단 API가
-        // 일시적으로 실패해도 그대로 유지합니다.
-        merged.realtimeStatus = realtime.status || "fallback-city";
-        merged.realtimeSource = "busan-city";
-        if (realtime.error) merged.realtimeError = realtime.error;
-        if (realtime.reason) merged.realtimeReason = realtime.reason;
-    }
+            basic.lastupdatetime ??
+            null,
 
-    if (!Number.isFinite(merged.parkingcnt) &&
-        Number.isFinite(merged.maxcnt) &&
-        Number.isFinite(merged.curravacnt)) {
-        merged.parkingcnt = Math.max(
-            0,
-            merged.maxcnt - merged.curravacnt
-        );
-    }
+        realtimeStatus: status,
+        realtimeSource: source,
+        realtimeMatched: realtime.matched === true,
+        realtimeError: realtime.error ?? null,
 
-    return merged;
+        dataAvailability: {
+            total: Number.isFinite(total),
+            current: Number.isFinite(current),
+            available: Number.isFinite(available),
+            realtime: status === "facility-realtime" || status === "city-realtime"
+        }
+    };
 }
 
 function toNumberOrNull(value) {
-    if (value === null || value === undefined || value === "") {
-        return null;
-    }
-
-    const number = Number(String(value).replace(/,/g, ""));
+    if (value === null || value === undefined || value === "") return null;
+    const number = Number(String(value).replace(/,/g, "").trim());
     return Number.isFinite(number) ? number : null;
 }
