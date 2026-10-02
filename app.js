@@ -187,10 +187,17 @@ function sortItems(items) {
             toNumber(a.availableParkingCount ?? a.curravacnt)
         ));
     } else if (mode === "available-asc") {
-        sorted.sort((a, b) => compareNullableNumbers(
-            toNumber(b.availableParkingCount ?? b.curravacnt),
-            toNumber(a.availableParkingCount ?? a.curravacnt)
-        ) * -1);
+        sorted.sort((a, b) => {
+            const aValue = toNumber(a.availableParkingCount ?? a.curravacnt);
+            const bValue = toNumber(b.availableParkingCount ?? b.curravacnt);
+            const aFinite = Number.isFinite(aValue);
+            const bFinite = Number.isFinite(bValue);
+
+            if (!aFinite && !bFinite) return 0;
+            if (!aFinite) return 1;
+            if (!bFinite) return -1;
+            return aValue - bValue;
+        });
     } else if (mode === "name-asc") {
         sorted.sort((a, b) => {
             const aName = String(a.parknm || "").toLocaleLowerCase("ko-KR");
@@ -211,6 +218,17 @@ function compareNullableNumbers(a, b) {
     if (!bFinite) return -1;
 
     return b - a;
+}
+
+function showSummary(totalCountValue, keyword = "") {
+    const safeKeyword = escapeHtml(keyword || "");
+    const count = Number(totalCountValue) || 0;
+
+    if (keyword) {
+        summary.innerHTML = `"<strong>${safeKeyword}</strong>" 검색 결과 <strong>${count}</strong> 곳`;
+    } else {
+        summary.innerHTML = `전체 공영주차장 <strong>${count}</strong> 곳`;
+    }
 }
 
 function showParkingList(items) {
