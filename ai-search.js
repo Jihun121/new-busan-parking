@@ -12,8 +12,10 @@
     const CREATE_FETCH_TIMEOUT_MS = 18_000;
     const POLL_FETCH_TIMEOUT_MS = 45_000;
     const MAX_TOTAL_WAIT_MS = 180_000;
-    const POLL_INTERVAL_MS = 2_500;
+    const SAME_QUERY_CACHE_MS = 30_000;
+    const POLL_INTERVAL_MS = 8_000;
     let isSearching = false;
+    let lastSuccessfulQuery = null;
 
     function setStatus(message = "", kind = "") {
         status.className = "ai-search-status";
@@ -97,7 +99,7 @@
                 payload = result.payload;
             } catch (error) {
                 consecutiveTransientErrors += 1;
-                if (consecutiveTransientErrors <= 3 && Date.now() - startedAt < MAX_TOTAL_WAIT_MS) {
+                if (consecutiveTransientErrors <= 2 && Date.now() - startedAt < MAX_TOTAL_WAIT_MS) {
                     setStatus("작업 상태 확인이 지연되어 다시 확인하고 있습니다…", "loading");
                     await delay(1_500 * consecutiveTransientErrors);
                     continue;
@@ -122,12 +124,12 @@
                     "GEMINI_CONNECTION_FAILED"
                 ].includes(payload?.code);
 
-                if ((transientProviderError || transientTransportError) && consecutiveTransientErrors < 5) {
+                if ((transientProviderError || transientTransportError) && consecutiveTransientErrors < 2) {
                     consecutiveTransientErrors += 1;
-                    const retryDelayMs = Math.min(750 * (2 ** (consecutiveTransientErrors - 1)), 8_000);
+                    const retryDelayMs = Math.min(2_000 * (2 ** (consecutiveTransientErrors - 1)), 8_000);
                     const reason = transientProviderError
-                        ? `Gemini 서버가 일시적으로 혼잡합니다. 작업 상태를 다시 확인합니다… (${consecutiveTransientErrors}/5)`
-                        : `작업 상태 연결이 일시적으로 불안정합니다. 다시 확인합니다… (${consecutiveTransientErrors}/5)`;
+                        ? `Gemini 서버가 일시적으로 혼잡합니다. 잠시 기다린 뒤 작업 상태를 다시 확인합니다… (${consecutiveTransientErrors}/2)`
+                        : `작업 상태 연결이 일시적으로 불안정합니다. 다시 확인합니다… (${consecutiveTransientErrors}/2)`;
                     setStatus(reason, "loading");
                     await delay(retryDelayMs);
                     continue;
@@ -159,6 +161,16 @@
             return;
         }
 
+        const normalizedQuery = query.replace(/\s+/g, " ").trim().toLocaleLowerCase("ko-KR");
+        if (lastSuccessfulQuery &&
+            lastSuccessfulQuery.normalizedQuery === normalizedQuery &&
+            Date.now() - lastSuccessfulQuery.timestamp < SAME_QUERY_CACHE_MS) {
+            answerText.textContent = lastSuccessfulQuery.answer;
+            answerPanel.hidden = false;
+            setStatus("같은 질문의 직전 답변을 재사용했습니다. 30초 안에는 추가 Gemini 요청을 보내지 않습니다.", "");
+            return;
+        }
+
         setBusy(true);
         setStatus("Gemini가 AI 검색 작업을 시작하고 있습니다…", "loading");
         answerPanel.hidden = true;
@@ -184,6 +196,12 @@
 
             answerText.textContent = result.answer;
             answerPanel.hidden = false;
+            lastSuccessfulQuery = {
+                normalizedQuery,
+                answer: result.answer,
+                model: result.model || "Gemini",
+                timestamp: Date.now()
+            };
             setStatus(`검색 완료 · ${result.model || "Gemini"} + MCP`, "");
         } catch (error) {
             console.error("AI parking search failed:", error);

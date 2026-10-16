@@ -85,3 +85,8 @@ npm run deploy
 현재 도구는 읽기 전용이며 인증 없이 사용할 수 있도록 구성되어 있습니다. 따라서 MCP URL을 아는 클라이언트는 도구를 호출할 수 있습니다. 널리 공개하기 전에는 호출량 제한 또는 인증을 추가하는 것을 권장합니다. `find_available_parking`는 외부 API 호출량을 늘리지 않도록 페이지 검색을 순차 실행하며 최대 5페이지로 제한합니다.
 
 도구는 `functions/api/parking.js`의 통합 API만 호출합니다. 공공데이터 인증키를 MCP 코드나 `wrangler.jsonc`에 넣지 않습니다.
+
+
+### Gemini native remote MCP integration
+
+The Pages AI endpoint now registers this Worker directly with Gemini Interactions API using `type: "mcp_server"`, `name: "busan_parking"`, the public `/mcp` URL, and an allowlist of the three read-only tool names. The Pages Function no longer manually dispatches tool calls or submits function-result continuation interactions. Keep this Worker deployed with Streamable HTTP at `/mcp`.

@@ -141,3 +141,18 @@ Gemini Interactions API에서 `requires_action` 상태로 멈춘 작업을 오�
 Gemini 작업 상태 조회에서 공급자가 HTTP 500/502/503/504를 반환하면, 프런트엔드는 기존 interaction ID를 유지한 채 최대 5회 지수형 대기 후 같은 상태 조회를 재시도합니다. `GEMINI_POLL_TIMEOUT` 및 `GEMINI_CONNECTION_FAILED`도 같은 재시도 경로를 사용합니다. 새 Gemini 작업을 재생성하지 않으므로 중복 실행 위험을 늘리지 않습니다.
 
 이 재시도는 공급자 과부하가 일시적일 때 사용성을 높이지만, 지속적인 장애/할당량 문제를 없애지는 않습니다. 계속 실패하면 Gemini API 상태, 모델 가용성 및 AI Studio의 프로젝트 사용량 한도를 확인하세요.
+
+
+## v14.7 — 요청량 최적화: Gemini 네이티브 원격 MCP + 느린 상태 조회
+
+이 버전은 이전 수동 function-call 브리지(`function_call` → Pages Function의 MCP `tools/call` → `function_result` continuation POST)를 제거했습니다. Gemini Interactions API의 `type: "mcp_server"` 원격 MCP 통합을 사용하고 `allowed_tools`에 이 앱의 읽기 전용 도구 3개만 허용합니다. MCP 서버는 Streamable HTTP 방식으로 외부에서 접속 가능해야 합니다.
+
+- 원격 MCP URL은 기존 Pages Secret/변수 `BUSAN_PARKING_MCP_URL`을 그대로 사용합니다.
+- 브라우저의 상태 폴링 간격을 2.5초에서 8초로 늘려 불필요한 GET 요청 수를 줄였습니다.
+- 일시적인 상태 조회 실패 재시도 횟수를 줄였습니다.
+- 같은 브라우저 탭에서 동일 질문의 성공 답변은 30초 동안 재사용해 즉시 같은 질문을 반복해도 Gemini를 다시 호출하지 않습니다. UI 상태줄에서 재사용 사실을 표시합니다.
+- `thinking_level: "low"`를 지정해 불필요한 장시간 추론을 줄이도록 했습니다.
+
+중요: 이 변경은 클라이언트의 불필요한 HTTP 폴링과 수동 continuation 요청을 줄이지만, Gemini의 무료 등급 모델별 RPD 한도를 제거하지는 않습니다. 사용자의 프로젝트에서 실제 오류 메시지로 확인된 20회/일 한도는 AI Studio에서 확인하세요. AI Studio의 요청 수 통계는 모든 API 요청 종류를 보여줄 수 있지만, 정확히 어떤 호출이 모델별 RPD를 소비하는지는 프로젝트의 Rate limits/Usage 화면과 Google의 현재 정책을 기준으로 확인해야 합니다. 한도 초과 후 반복 재시도하지 마세요.
+
+공식 참고: https://ai.google.dev/gemini-api/docs/function-calling/ · https://ai.google.dev/gemini-api/docs/background-execution · https://ai.google.dev/gemini-api/docs/rate-limits
