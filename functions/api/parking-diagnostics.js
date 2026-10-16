@@ -97,10 +97,11 @@ export async function onRequestGet(context) {
             failureReasons: {
                 "city-records-empty": "부산광역시 기본정보 목록이 비어 있음",
                 "facility-name-and-address-missing": "시설공단 목록에서 이름·주소·관리번호를 찾지 못함",
+                "facility-name-is-placeholder": "시설공단 목록의 이름이 예비/미정 등 임시값이라 매칭하지 않음",
                 "city-record-names-missing": "부산광역시 레코드에 매칭 가능한 이름이 없음",
-                "best-candidate-below-threshold": "가장 유사한 후보도 안전한 매칭 점수에 미달",
+                "best-candidate-below-threshold": "후보는 있으나 자동 연결 기준에 미달; candidates에 약한 유사 후보 표시",
                 "ambiguous-top-candidates": "상위 후보가 비슷해 잘못 연결할 위험이 있어 매칭하지 않음",
-                "matched-city-record-without-address": "레코드는 연결됐지만 주소 필드가 비어 있음"
+                "matched-city-record-without-address": "레코드는 연결됐지만 유효한 상세 주소 필드가 없음"
             }
         },
         summary,
@@ -124,12 +125,18 @@ export async function onRequestGet(context) {
                 officialAddressFieldMapping: {
                     jibunAddr: "공공데이터포털 명세상 소재지도로명주소",
                     doroAddr: "공공데이터포털 명세상 소재지지번주소"
+                },
+                addressQualityCounts: {
+                    fullAddress: cityItems.filter(item => item.addressQuality === "full-address" || Boolean(item.address)).length,
+                    districtOnly: cityItems.filter(item => item.addressQuality === "district-only").length,
+                    placeholderOrInvalid: cityItems.filter(item => item.addressQuality === "placeholder-or-invalid").length,
+                    missing: cityItems.filter(item => item.addressQuality === "missing").length
                 }
             }
         },
         unmatchedSamples,
         matchedButAddressMissingSamples: matchedNoAddressSamples,
-        note: "후보 점수가 애매하면 다른 주차장의 주소를 잘못 붙이지 않도록 자동 매칭을 보류합니다. 예시 후보를 확인한 뒤 별칭 규칙을 추가할 수 있습니다."
+        note: "후보 점수가 애매하면 다른 주차장의 주소를 잘못 붙이지 않도록 자동 매칭을 보류합니다. 후보 목록은 자동 매칭 기준 미달 후보도 포함합니다. 주소값 '-', N/A, 또는 구·군명만 있는 경우 상세 주소로 집계하지 않습니다."
     }, 200);
 }
 

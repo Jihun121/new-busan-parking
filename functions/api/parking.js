@@ -239,6 +239,10 @@ export async function onRequestGet(context) {
                     unmatchedRecords: addressStats.unmatchedRecords,
                     addressAvailableAfterMerge: addressStats.addressAvailableAfterMerge,
                     addressMissingAfterMerge: addressStats.addressMissingAfterMerge,
+                    districtOnlyAfterMerge: addressStats.districtOnlyAfterMerge,
+                    cityRecordsWithUsableAddress: addressStats.cityRecordsWithUsableAddress,
+                    cityRecordsWithRawButUnusableAddress: addressStats.cityRecordsWithRawButUnusableAddress,
+                    cityRecordsDistrictOnly: addressStats.cityRecordsDistrictOnly,
                     matchMethods: addressStats.matchMethods,
                     failureReasons: addressStats.failureReasons
                 }

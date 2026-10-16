@@ -1,4 +1,5 @@
 import { matchCityBasicInfo } from "./matchCityBasicInfo.js";
+import { cleanAddress, firstUsableAddress, getBusanDistrict, classifyAddressValues } from "./addressUtils.js";
 
 const CITY_BASIC_INFO_URL =
     "https://apis.data.go.kr/6260000/BusanPblcPrkngInfoService/getPblcPrkngInfo";
@@ -7,9 +8,9 @@ const DEFAULT_TIMEOUT_MS = 5000;
 const DEFAULT_ROWS = 1000;
 const MEMORY_TTL_MS = 10 * 60 * 1000;
 const EDGE_CACHE_TTL_MS = 60 * 60 * 1000;
-const CACHE_NAME = "busan-parking-city-v15-2";
+const CACHE_NAME = "busan-parking-city-v15-3";
 const CACHE_KEY = new Request(
-    "https://busan-parking-cache.invalid/city-basic-v15-2",
+    "https://busan-parking-cache.invalid/city-basic-v15-3",
     { method: "GET" }
 );
 
@@ -204,9 +205,14 @@ function toBasicRecord(item) {
     // 공공데이터포털 명세상 레거시 필드 이름이 일반적인 의미와 반대로 정의되어 있습니다:
     // jibunAddr = 소재지도로명주소, doroAddr = 소재지지번주소.
     // 화면 필드 roadAddress / lotAddress는 명세의 국문 설명에 맞춰 정규화합니다.
-    const roadAddress = firstText(item.jibunAddr, item.roadAddress, item.roadAddr, item.rdnmadr);
-    const lotAddress = firstText(item.doroAddr, item.lotAddress, item.lotAddr, item.lnmadr);
-    const address = firstText(roadAddress, lotAddress, item.address);
+    const rawRoadAddress = firstText(item.jibunAddr, item.roadAddress, item.roadAddr, item.rdnmadr);
+    const rawLotAddress = firstText(item.doroAddr, item.lotAddress, item.lotAddr, item.lnmadr);
+    const rawAddress = firstText(item.address);
+    const roadAddress = cleanAddress(rawRoadAddress);
+    const lotAddress = cleanAddress(rawLotAddress);
+    const address = firstUsableAddress(roadAddress, lotAddress, rawAddress);
+    const district = getBusanDistrict(rawRoadAddress, rawLotAddress, rawAddress);
+    const addressQuality = classifyAddressValues(rawRoadAddress, rawLotAddress, rawAddress);
 
     return {
         parknm: firstText(item.pkNam, item.parknm, item.parkNm, item.parkName, item.name),
@@ -215,6 +221,9 @@ function toBasicRecord(item) {
         roadAddress,
         lotAddress,
         address,
+        district,
+        addressQuality,
+        addressNote: addressQuality === "district-only" ? "원본 API가 구·군 단위 위치만 제공합니다." : addressQuality === "placeholder-or-invalid" ? "원본 API의 주소값이 자리표시자 또는 유효하지 않은 값입니다." : addressQuality === "missing" ? "원본 API에 주소 필드가 없습니다." : "",
         parkingType: firstText(item.pkFm, item.parkingType, item.prkplceType),
         totalParkingCount: toNumberOrNull(item.pkCnt, item.totalParkingCount, item.prkcmprt),
         currentParkingCount: toNumberOrNull(item.parkingcnt, item.currparkcnt, item.currCnt, item.currentParkingCount),

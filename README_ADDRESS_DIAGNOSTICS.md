@@ -1,52 +1,48 @@
-# 주소 매칭 개선 및 진단 (v15.2)
+# 주소 매칭 및 주소 품질 개선 (v15.3)
 
-## 적용 내용
-- 부산광역시 기본정보의 주소 필드를 공식 명세의 국문 정의에 맞춰 정규화했습니다. 해당 API 문서는 `jibunAddr`를 소재지도로명주소, `doroAddr`를 소재지지번주소로 적어 필드 이름의 일반적인 의미와 혼동될 수 있습니다. 코드는 API 문서의 국문 필드 설명에 맞춥니다.
-- 시설공단/부산광역시 주차장 이름이 조금 다를 경우 정규화된 이름과 보수적인 유사도 점수로 매칭합니다.
-- 이름 후보가 애매하면 잘못된 주소가 연결되지 않도록 매칭을 보류하고 실패 원인 및 상위 후보를 진단 응답에 기록합니다.
-- 주소 매칭률과 최종 주소 보유율을 반환하는 `/api/parking-diagnostics` 엔드포인트를 추가했습니다. 이 엔드포인트는 실시간 주차 API(②)를 호출하지 않습니다.
-- `mergeParkingData.js`가 부산시설공단 목록 자체에 주소/좌표가 있는 경우도 보존하도록 수정했습니다.
-- 진단 요청에 `?refresh=1`을 붙이면 로컬/엣지 캐시를 우회해 원본 목록을 다시 가져오도록 요청합니다. API가 실패하면 캐시 데이터가 사용될 수도 있으므로 응답의 `stale` 필드를 확인하세요.
+## 진단 샘플에서 확인된 문제
+- 여러 시설공단 이름은 역 출구/방향/구역 표기를 포함해 현재 이름 매칭의 후보 길이 기준에 걸려 후보가 0개로 표시되었습니다.
+- `요트경기장 앞 2구역(대형)`은 `요트경기장 앞 공영주차장` 후보가 87점으로 보였지만 기존 기준에서 자동 연결되지 않았습니다.
+- 일부 부산광역시 주소 필드는 `-` 또는 `해운대구`처럼 자리표시자/행정구 단위만 포함합니다. 이전 코드는 이를 상세 주소로 집계할 수 있었습니다.
 
-## 로컬에서 확인
-프로젝트 루트에서 Wrangler Pages 개발 서버를 실행합니다.
+## v15.3 변경
+- 주차장 이름의 숫자 구역/출구, 남측/북측, 앞/옆/뒤, 지하/주변복개 등 위치 한정자를 제거한 보조 이름 variants를 만들어 후보 비교에 사용합니다.
+- 보조 이름이 정확히 일치하더라도 상위 후보가 여러 개면 자동 매칭을 보류합니다.
+- 약한 유사도 점수도 후보 진단에 노출하지만, 이 낮은 진단 점수만으로는 자동 매칭되지 않습니다.
+- `예비`, `미정`, `기타`, `테스트` 같은 임시 이름은 자동 매칭하지 않습니다.
+- `-`, `N/A`, `주소없음`, 구/군 이름만 있는 주소는 상세 주소로 보지 않습니다.
+- 주소 품질을 `full-address`, `district-only`, `placeholder-or-invalid`, `missing`으로 분리합니다.
+- 진단 summary에 유효 주소, 구·군 단위 주소, 유효하지 않은 원본 주소 수를 추가했습니다.
+- 카드에 상세 주소가 없고 구·군만 확인되면 그 구·군을 명시하고, 지도 검색어는 `구·군 + 주차장명`으로 만듭니다. 주소 복사 버튼은 완전한 주소가 없으면 비활성 상태를 유지합니다.
+- 부산광역시 필드 매핑은 공식 명세 설명을 그대로 따릅니다: `jibunAddr` = 소재지도로명주소, `doroAddr` = 소재지지번주소.
+- 기본정보 캐시와 PWA 정적 캐시 버전을 갱신했습니다.
 
+## 진단 실행
 ```powershell
 npx wrangler@4 pages dev . --port 8788
 ```
 
-브라우저에서 진단 JSON을 엽니다.
-
+기본 진단:
 ```text
 http://127.0.0.1:8788/api/parking-diagnostics
 ```
 
-원본 갱신을 시도하려면:
-
+원본 데이터 갱신 시도:
 ```text
 http://127.0.0.1:8788/api/parking-diagnostics?refresh=1
 ```
 
-## 주요 결과 필드
-- `summary.cityMatchRatePercent`: 시설공단 목록이 부산광역시 레코드에 매칭된 비율
-- `summary.finalAddressCoveragePercent`: 최종 출력에 주소가 있는 비율(시설공단 목록 자체 주소 포함)
-- `summary.failureReasons`: 매칭 실패 원인의 건수
-- `unmatchedSamples`: 실패한 주차장, 상위 유사 후보/점수, 주소 예시 최대 25개
-- `matchedButAddressMissingSamples`: 레코드는 매칭됐지만 주소가 없는 예시
+진단에서 확인할 항목:
+- `summary.cityMatchRatePercent`: 안전하게 매칭된 시설공단 목록 비율
+- `summary.finalAddressCoveragePercent`: 실제 상세주소를 확보한 비율
+- `summary.cityRecordsWithUsableAddress`: 부산광역시 원본 목록 중 유효한 상세주소가 있는 수
+- `summary.cityRecordsWithRawButUnusableAddress`: 원본 주소 필드는 있으나 placeholder/구·군 단위에 그친 수
+- `summary.cityRecordsDistrictOnly`: 구·군 단위만 제공되는 원본 레코드 수
+- `unmatchedSamples[].candidates`: 자동 매칭 기준에 못 미친 경우에도 표시되는 유사 후보 상위 목록
 
-## 해석 주의
-- `best-candidate-below-threshold`는 유사한 이름이 있긴 하지만 안전한 자동 연결 점수에 미달한 경우입니다.
-- `ambiguous-top-candidates`는 후보가 거의 같아 다른 주차장의 주소를 잘못 붙일 위험 때문에 매칭하지 않은 경우입니다. 이는 의도적인 안전장치입니다.
-- `cityRecordsLoaded`보다 `cityRecordsReportedTotal`이 크면 부산광역시 목록 일부만 읽어온 것입니다.
+## 주의
+이 수정은 이름 매칭이 놓쳤던 후보를 더 잘 드러내고 일부 위치 한정자 차이를 연결합니다. 다만 부산광역시 데이터셋에 실제 상세 주소가 없거나 해당 시설이 데이터셋에 포함되지 않았다면 주소를 자동으로 만들어낼 수 없습니다. 그런 주차장은 다른 공식 위치 데이터가 필요하며, 잘못된 주소를 연결하지 않도록 계속 보수적으로 처리합니다.
 
-## 공식 출처
-부산광역시_공영주차장 정보 조회 API 명세: https://www.data.go.kr/data/15004683/openapi.do
-부산시설공단_공영주차장 시설 현황 API 명세: https://www.data.go.kr/data/15157490/openapi.do
-
-## 매칭 알고리즘 단위 테스트
-
-프로젝트 루트에서 다음 명령을 실행할 수 있습니다.
-
-```powershell
-node tests/address-matching.test.mjs
-```
+## 공식 문서
+- https://www.data.go.kr/data/15004683/openapi.do
+- https://www.data.go.kr/data/15157490/openapi.do

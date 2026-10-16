@@ -655,6 +655,7 @@ function buildKakaoLocation(parking) {
     const roadAddress = String(parking?.roadAddress || "").trim();
     const lotAddress = String(parking?.lotAddress || "").trim();
     const address = String(parking?.address || roadAddress || lotAddress || "").trim();
+    const district = String(parking?.addressDistrict || parking?.district || "").trim();
 
     let query = "";
     let addressText = address || roadAddress || lotAddress || "";
@@ -675,9 +676,9 @@ function buildKakaoLocation(parking) {
         methodLabel = "주소";
         query = address;
     } else {
-        methodLabel = "주차장명";
-        query = name;
-        addressText = "주소 정보 없음";
+        methodLabel = district ? "구·군 + 주차장명" : "주차장명";
+        query = district ? `${district} ${name}` : name;
+        addressText = district ? `${district} · 상세 주소 없음` : "주소 정보 없음";
     }
 
     let mapUrl;

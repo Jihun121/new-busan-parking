@@ -1,3 +1,5 @@
+import { firstUsableAddress, getBusanDistrict, classifyAddressValues } from "./addressUtils.js";
+
 export function mergeParkingData({
     facility = {},
     realtime = {},
@@ -84,6 +86,25 @@ export function mergeParkingData({
         hasFacilityRealtime ? null : basic?.lastupdatetime
     );
 
+    const address = firstUsableAddress(
+        basic?.address, basic?.roadAddress, basic?.lotAddress,
+        facility?.address, facility?.roadAddress, facility?.lotAddress,
+        facility?.roadAddr, facility?.lotAddr, facility?.doroAddr, facility?.jibunAddr
+    );
+    const roadAddress = firstUsableAddress(basic?.roadAddress, facility?.roadAddress, facility?.roadAddr);
+    const lotAddress = firstUsableAddress(basic?.lotAddress, facility?.lotAddress, facility?.lotAddr);
+    const addressDistrict = firstText(basic?.district, facility?.district, getBusanDistrict(
+        basic?.address, basic?.roadAddress, basic?.lotAddress,
+        facility?.address, facility?.roadAddress, facility?.lotAddress,
+        facility?.roadAddr, facility?.lotAddr, facility?.doroAddr, facility?.jibunAddr
+    ));
+    const addressQuality = classifyAddressValues(address, roadAddress, lotAddress) === "full-address"
+        ? "full-address"
+        : addressDistrict ? "district-only" : "missing";
+    const addressNote = addressQuality === "district-only"
+        ? "구·군 단위 위치만 확인됩니다. 상세 주소는 원본 데이터에 없습니다."
+        : addressQuality === "missing" ? "상세 주소 정보가 없습니다." : "";
+
     return {
         parkgcd: firstText(facility.parkgcd, realtime.parkgcd),
         parknm: firstText(facility.parknm, realtime.parknm, basic?.parknm),
@@ -106,12 +127,15 @@ export function mergeParkingData({
         basicInfoCandidateName: basic?.bestCandidateName || null,
         basicInfoCandidateScore: basic?.bestCandidateScore ?? null,
         managementAgency: firstText(basic?.managementAgency, facility?.managementAgency, facility?.guNm),
-        address: firstText(basic?.address, basic?.roadAddress, basic?.lotAddress, facility?.address, facility?.roadAddress, facility?.lotAddress, facility?.doroAddr, facility?.jibunAddr),
-        roadAddress: firstText(basic?.roadAddress, facility?.roadAddress, facility?.roadAddr),
-        lotAddress: firstText(basic?.lotAddress, facility?.lotAddress, facility?.lotAddr),
-        addressSource: basic?.matched && firstText(basic?.address, basic?.roadAddress, basic?.lotAddress)
+        address,
+        roadAddress,
+        lotAddress,
+        addressDistrict,
+        addressQuality,
+        addressNote,
+        addressSource: address && basic?.matched
             ? "부산광역시 기본정보 매칭"
-            : firstText(facility?.address, facility?.roadAddress, facility?.lotAddress, facility?.doroAddr, facility?.jibunAddr)
+            : address
                 ? "부산시설공단 목록"
                 : "none",
         parkingType: firstText(basic?.parkingType, facility?.parkingType),
@@ -140,7 +164,9 @@ export function mergeParkingData({
             available: Number.isFinite(available),
             realtime: hasFacilityRealtime || hasCityRealtime,
             basicInfo: basic?.matched === true,
-            address: Boolean(firstText(basic?.address, basic?.roadAddress, basic?.lotAddress, facility?.address, facility?.roadAddress, facility?.lotAddress, facility?.doroAddr, facility?.jibunAddr))
+            address: Boolean(address),
+            addressQuality,
+            districtOnly: !address && Boolean(addressDistrict)
         }
     };
 }

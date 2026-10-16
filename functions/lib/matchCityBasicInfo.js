@@ -1,7 +1,15 @@
+import {
+    cleanAddress,
+    firstUsableAddress,
+    getBusanDistrict,
+    hasUsableAddress,
+    hasRawAddress
+} from "./addressUtils.js";
+
 /**
- * Match a 부산시설공단 master record to 부산광역시 basic info.
- * Conservative by design: when names are ambiguous, we leave the address blank
- * rather than risk attaching another parking lot's address.
+ * Match 부산시설공단 records to 부산광역시 basic records.
+ * Location qualifiers such as "2번", "남측", "앞", "옆" are considered as
+ * alternate names, but ambiguous candidates are still rejected.
  */
 export function matchCityBasicInfo(facility, cityItems = []) {
     const target = getFacilityIdentity(facility);
@@ -9,14 +17,17 @@ export function matchCityBasicInfo(facility, cityItems = []) {
     if (!Array.isArray(cityItems) || cityItems.length === 0) {
         return unmatched("city-records-empty", null, []);
     }
-
     if (!target.name && !target.addresses.length && !target.managementNumber) {
         return unmatched("facility-name-and-address-missing", null, []);
     }
+    if (isPlaceholderName(target.name)) {
+        return unmatched("facility-name-is-placeholder", null, []);
+    }
 
-    const allCandidates = cityItems.map((item) => scoreCandidate(target, item))
+    const allCandidates = cityItems
+        .map((item) => scoreCandidate(target, item))
         .filter((candidate) => candidate.name || candidate.managementNumber)
-        .sort((a, b) => b.score - a.score);
+        .sort((a, b) => b.score - a.score || b.nameSimilarity - a.nameSimilarity);
     const candidates = allCandidates.filter((candidate) => candidate.score > 0);
 
     if (!allCandidates.length) {
@@ -29,33 +40,31 @@ export function matchCityBasicInfo(facility, cityItems = []) {
     const best = candidates[0];
     const second = candidates[1] || null;
     const margin = second ? best.score - second.score : best.score;
-
-    // Shared management number is the strongest join key, followed by exact name/core-name.
-    const exactIdentity = ["management-number", "exact-name", "exact-core-name"].includes(best.reason);
+    const exactIdentity = [
+        "management-number", "exact-name", "exact-core-name", "normalized-location-name"
+    ].includes(best.reason);
     const exactAddress = best.addressExact;
-    const fuzzyQualified = best.score >= 82 && best.nameSimilarity >= 0.78;
-    const containsQualified = best.reason === "name-contains" && best.score >= 88;
+    const fuzzyQualified = best.score >= 82 && best.nameSimilarity >= 0.78 && best.reason === "fuzzy-name";
+    const containsQualified = best.reason === "name-contains" && best.score >= 88 && best.nameSimilarity >= 0.68;
     const addressBacked = exactAddress && (!target.name || best.nameSimilarity >= 0.35);
-
-    const minimumMargin = exactIdentity || addressBacked ? 5 : 8;
+    const minimumMargin = best.reason === "normalized-location-name" ? 8 : (exactIdentity || addressBacked ? 5 : 10);
     const sufficientlyStrong = exactIdentity || containsQualified || fuzzyQualified || addressBacked;
 
     if (!sufficientlyStrong || best.score < 80) {
         return unmatched("best-candidate-below-threshold", best, candidates.slice(0, 3));
     }
-
     if (second && margin < minimumMargin) {
         return unmatched("ambiguous-top-candidates", best, candidates.slice(0, 3));
     }
 
-    const hasAddress = Boolean(best.item?.address || best.item?.roadAddress || best.item?.lotAddress);
+    const hasAddress = hasUsableAddress(best.item);
     return {
         ...best.item,
         matched: true,
         matchScore: best.score,
         matchReason: `matched-by-${best.reason}`,
         matchConfidence: best.score >= 110 ? "high" : best.score >= 88 ? "medium" : "review",
-        addressMatchStatus: hasAddress ? "city-address-found" : "matched-city-record-without-address",
+        addressMatchStatus: hasAddress ? "city-address-found" : (best.item?.addressQuality || "matched-city-record-without-address"),
         failureReason: hasAddress ? null : "matched-city-record-without-address",
         bestCandidateName: best.name || null,
         bestCandidateScore: best.score,
@@ -70,31 +79,14 @@ export function getFacilityIdentity(record = {}) {
         name: firstText(record.parknm, record.parkName, record.parkNm, record.pkNam, record.name),
         managementNumber: normalizeId(firstText(record.mgntNum, record.managementNumber, record.managementNo, record.parkingManagementNumber, record.prkplceNo)),
         addresses: unique([
-            record.address,
-            record.roadAddress,
-            record.lotAddress,
-            record.roadAddr,
-            record.lotAddr,
-            record.doroAddr,
-            record.jibunAddr,
-            record.rdnmadr,
-            record.lnmadr
-        ].map(normalizeAddress).filter(Boolean)),
+            record.address, record.roadAddress, record.lotAddress, record.roadAddr, record.lotAddr,
+            record.doroAddr, record.jibunAddr, record.rdnmadr, record.lnmadr
+        ].map(normalizeAddress).filter(Boolean))
     };
 }
 
 export function hasAnyAddress(record = {}) {
-    return Boolean(firstText(
-        record.address,
-        record.roadAddress,
-        record.lotAddress,
-        record.roadAddr,
-        record.lotAddr,
-        record.doroAddr,
-        record.jibunAddr,
-        record.rdnmadr,
-        record.lnmadr
-    ));
+    return hasUsableAddress(record);
 }
 
 export function buildAddressMatchDiagnostics(facilityItems = [], cityItems = [], matches = [], scope = "entire-facility-list") {
@@ -106,6 +98,11 @@ export function buildAddressMatchDiagnostics(facilityItems = [], cityItems = [],
         const match = matches[index];
         return hasAnyAddress(facility) || (match?.matched === true && hasAnyAddress(match));
     }).length;
+    const districtOnlyAfterMerge = facilityItems.filter((facility, index) => {
+        const match = matches[index] || {};
+        const hasFull = hasAnyAddress(facility) || (match.matched === true && hasAnyAddress(match));
+        return !hasFull && Boolean(getBusanDistrict(facility.district, match.district, match.roadAddress, match.lotAddress, match.address));
+    }).length;
 
     const matchMethods = {};
     const failureReasons = {};
@@ -115,6 +112,17 @@ export function buildAddressMatchDiagnostics(facilityItems = [], cityItems = [],
         if (method) matchMethods[method] = (matchMethods[method] || 0) + 1;
         if (reason) failureReasons[reason] = (failureReasons[reason] || 0) + 1;
     }
+
+    const cityRecordsWithUsableAddress = cityItems.filter(hasAnyAddress).length;
+    const cityRecordsWithRawButUnusableAddress = cityItems.filter((record) =>
+        !hasAnyAddress(record) && (
+            hasRawAddress(record) ||
+            ["district-only", "placeholder-or-invalid"].includes(record?.addressQuality)
+        )
+    ).length;
+    const cityRecordsDistrictOnly = cityItems.filter((record) => !hasAnyAddress(record) && Boolean(getBusanDistrict(
+        record.district, record.address, record.roadAddress, record.lotAddress
+    ))).length;
 
     return {
         scope,
@@ -128,6 +136,10 @@ export function buildAddressMatchDiagnostics(facilityItems = [], cityItems = [],
         unmatchedRecords: total - matched,
         addressAvailableAfterMerge: finalAddressAvailable,
         addressMissingAfterMerge: total - finalAddressAvailable,
+        districtOnlyAfterMerge,
+        cityRecordsWithUsableAddress,
+        cityRecordsWithRawButUnusableAddress,
+        cityRecordsDistrictOnly,
         cityMatchRatePercent: percent(matched, total),
         cityAddressJoinRatePercent: percent(matchedWithAddress, total),
         finalAddressCoveragePercent: percent(finalAddressAvailable, total),
@@ -141,18 +153,17 @@ export function getCandidateSamples(facilityItems = [], matches = [], limit = 20
     for (let i = 0; i < facilityItems.length && samples.length < limit; i += 1) {
         const facility = facilityItems[i];
         const match = matches[i] || {};
-        // This list is only for records which failed to match; matched-but-no-address
-        // records are reported separately by the diagnostics endpoint.
         if (match.matched === true) continue;
 
         samples.push({
             facilityName: getFacilityIdentity(facility).name || null,
             facilityCode: firstText(facility.parkgcd, facility.parkGcd, facility.parkGCd, facility.pParkGCd, facility.mgntNum) || null,
-            currentAddress: firstText(facility.address, facility.roadAddress, facility.lotAddress) || null,
-            matched: match.matched === true,
+            currentAddress: firstUsableAddress(facility.address, facility.roadAddress, facility.lotAddress) || null,
+            districtHint: getBusanDistrict(facility.district, facility.address, facility.roadAddress, facility.lotAddress) || null,
+            matched: false,
             matchScore: match.matchScore ?? match.bestCandidateScore ?? 0,
             matchReason: match.matchReason || null,
-            failureReason: match.failureReason || (!match.matched ? "unmatched" : "address-not-available-after-match"),
+            failureReason: match.failureReason || "unmatched",
             bestCandidateName: match.bestCandidateName || null,
             bestCandidateScore: match.bestCandidateScore ?? null,
             secondCandidateName: match.secondCandidateName || null,
@@ -170,15 +181,14 @@ function scoreCandidate(target, item) {
     const fullB = normalizeName(name);
     const coreA = normalizeCoreName(target.name);
     const coreB = normalizeCoreName(name);
-    const nameSimilarity = coreA && coreB ? similarity(coreA, coreB) : 0;
+    const variantsA = nameVariants(target.name);
+    const variantsB = nameVariants(name);
+    const compared = compareNameVariants(variantsA, variantsB);
+    const nameSimilarity = compared.similarity;
+
     const addressList = unique([
-        item?.roadAddress,
-        item?.lotAddress,
-        item?.address,
-        item?.doroAddr,
-        item?.jibunAddr,
-        item?.rdnmadr,
-        item?.lnmadr
+        item?.roadAddress, item?.lotAddress, item?.address, item?.doroAddr,
+        item?.jibunAddr, item?.rdnmadr, item?.lnmadr
     ].map(normalizeAddress).filter(Boolean));
     const addressExact = target.addresses.some((targetAddress) => addressList.includes(targetAddress));
     const addressPartial = !addressExact && target.addresses.some((targetAddress) => addressList.some((cityAddress) =>
@@ -197,17 +207,25 @@ function scoreCandidate(target, item) {
     } else if (coreA && coreB && coreA === coreB && coreA.length >= 2) {
         score = 115;
         reason = "exact-core-name";
-    } else if (coreA && coreB && Math.min(coreA.length, coreB.length) >= 4 && (coreA.includes(coreB) || coreB.includes(coreA))) {
-        const ratio = Math.min(coreA.length, coreB.length) / Math.max(coreA.length, coreB.length);
-        score = Math.round(82 + ratio * 10);
+    } else if (compared.exactVariant && compared.exactVariant.length >= 3) {
+        score = 112;
+        reason = "normalized-location-name";
+    } else if (compared.contains) {
+        const { shorter, longer } = compared.contains;
+        const ratio = shorter.length / Math.max(1, longer.length);
+        score = Math.round(82 + ratio * 8);
         reason = "name-contains";
-    } else if (coreA && coreB && Math.min(coreA.length, coreB.length) >= 5 && nameSimilarity >= 0.70) {
+    } else if (Math.min(coreA.length, coreB.length) >= 3 && nameSimilarity >= 0.70) {
         score = Math.round(nameSimilarity * 100);
         reason = "fuzzy-name";
+    } else if (nameSimilarity >= 0.22) {
+        // Keep weak candidates visible for diagnostics; this score is intentionally
+        // capped below the automatic-match threshold and can never match by itself.
+        score = Math.max(1, Math.round(nameSimilarity * 70));
+        reason = "diagnostic-fuzzy-name";
     }
 
     if (addressExact) {
-        // Address is a valid join key when the facility record does not include a name.
         score = !target.name
             ? Math.max(score, 110)
             : Math.max(score + 45, nameSimilarity >= 0.30 ? 100 : 0);
@@ -225,9 +243,53 @@ function scoreCandidate(target, item) {
         nameSimilarity: Number(nameSimilarity.toFixed(3)),
         addressExact,
         addressPartial,
-        roadAddress: firstText(item?.roadAddress, item?.address) || null,
-        lotAddress: firstText(item?.lotAddress) || null
+        roadAddress: cleanAddress(item?.roadAddress || item?.address) || null,
+        lotAddress: cleanAddress(item?.lotAddress) || null,
+        addressQuality: item?.addressQuality || (hasUsableAddress(item) ? "full-address" : (getBusanDistrict(item?.district, item?.address, item?.roadAddress, item?.lotAddress) ? "district-only" : "missing")),
+        district: firstText(item?.district, getBusanDistrict(item?.address, item?.roadAddress, item?.lotAddress)) || null
     };
+}
+
+function nameVariants(value) {
+    const original = String(value || "").replace(/\([^)]*\)/g, " ");
+    const initial = normalizeCoreName(original);
+    const variants = new Set();
+    if (initial.length >= 3) variants.add(initial);
+
+    let current = initial;
+    // Strip one suffix at a time to support combinations such as "앞 2구역", "역 2번", or "주변복개".
+    const suffixPattern = /(?:\d+구역|\d+번(?:출구)?|대형|소형|특대형|경차|주변복개|고가밑|고가하부|고가아래|주변|부근|건너편|남측|북측|동측|서측|남쪽|북쪽|동쪽|서쪽|앞|옆|뒤|지하|지상|동편|서편|남편|북편)$/;
+    for (let i = 0; i < 8; i += 1) {
+        const next = current.replace(suffixPattern, "");
+        if (!next || next === current) break;
+        current = next;
+        if (current.length >= 3) variants.add(current);
+    }
+    return [...variants];
+}
+
+function compareNameVariants(a, b) {
+    let exactVariant = "";
+    let contains = null;
+    let similarityScore = 0;
+
+    for (const left of a) {
+        for (const right of b) {
+            if (!left || !right) continue;
+            if (left === right && left.length >= 3) exactVariant = left;
+            const shorter = left.length <= right.length ? left : right;
+            const longer = left.length <= right.length ? right : left;
+            if (shorter.length >= 3 && longer.includes(shorter)) {
+                if (!contains || shorter.length / longer.length > contains.shorter.length / contains.longer.length) {
+                    contains = { shorter, longer };
+                }
+            }
+            if (Math.min(left.length, right.length) >= 3) {
+                similarityScore = Math.max(similarityScore, similarity(left, right));
+            }
+        }
+    }
+    return { exactVariant, contains, similarity: similarityScore };
 }
 
 function unmatched(failureReason, best, candidates) {
@@ -251,8 +313,11 @@ function summarizeCandidate(candidate) {
         name: candidate.name || null,
         score: candidate.score || 0,
         reason: candidate.reason || "none",
-        roadAddress: candidate.roadAddress || null,
-        lotAddress: candidate.lotAddress || null
+        nameSimilarity: candidate.nameSimilarity ?? null,
+        roadAddress: cleanAddress(candidate.roadAddress) || null,
+        lotAddress: cleanAddress(candidate.lotAddress) || null,
+        addressQuality: candidate.addressQuality || "missing",
+        district: candidate.district || null
     };
 }
 
@@ -267,7 +332,7 @@ function normalizeCoreName(value) {
 }
 
 function normalizeAddress(value) {
-    return String(value || "")
+    return cleanAddress(value)
         .toLowerCase()
         .replace(/부산광역시|부산시/g, "")
         .replace(/[^\p{L}\p{N}]/gu, "");
@@ -294,6 +359,11 @@ function similarity(a, b) {
     let overlap = 0;
     for (const [gram, count] of ga) overlap += Math.min(count, gb.get(gram) || 0);
     return (2 * overlap) / (Math.max(1, a.length - 1) + Math.max(1, b.length - 1));
+}
+
+function isPlaceholderName(name) {
+    const normalized = normalizeName(name);
+    return ["예비", "미정", "기타", "테스트", "미등록"].includes(normalized);
 }
 
 function percent(part, whole) {
