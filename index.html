@@ -85,6 +85,43 @@
             <span>빈자리 기준으로 정렬하면 여유 있는 주차장을 빠르게 찾을 수 있습니다.</span>
         </div>
 
+        <section class="ai-search-panel" aria-labelledby="aiSearchTitle">
+            <div class="ai-search-heading">
+                <div class="ai-heading-icon" aria-hidden="true">AI</div>
+                <div>
+                    <div class="ai-eyebrow">GEMINI · MCP</div>
+                    <h2 id="aiSearchTitle">AI 주차장 도우미</h2>
+                    <p>원하는 조건을 말로 입력하면 실제 주차장 데이터를 조회해 찾아드립니다.</p>
+                </div>
+            </div>
+
+            <form id="aiSearchForm" class="ai-search-form">
+                <label class="sr-only" for="aiSearchInput">AI 주차장 검색 질문</label>
+                <textarea id="aiSearchInput" name="query" rows="2" maxlength="800"
+                    placeholder="예: 해운대구에서 빈자리가 10개 이상인 공영주차장을 빈자리 많은 순으로 찾아줘."
+                    required></textarea>
+                <div class="ai-search-form-footer">
+                    <span class="ai-input-hint">주차장 검색 · 빈자리 조건 · 주소/요금 확인</span>
+                    <button id="aiSearchBtn" class="ai-submit-btn" type="submit">
+                        <span aria-hidden="true">✦</span> AI로 찾기
+                    </button>
+                </div>
+            </form>
+
+            <div class="ai-prompt-chips" aria-label="예시 질문">
+                <button type="button" class="ai-prompt-chip" data-ai-prompt="해운대구 공영주차장을 찾아서 주소와 빈자리 정보를 알려줘.">해운대구 주차장</button>
+                <button type="button" class="ai-prompt-chip" data-ai-prompt="빈자리가 10개 이상인 주차장을 찾아 빈자리 많은 순으로 5곳 보여줘.">빈자리 10개 이상</button>
+                <button type="button" class="ai-prompt-chip" data-ai-prompt="주차장 이름으로 검색하고 주소, 요금, 운영시간을 알려줘.">주소·요금 확인</button>
+            </div>
+
+            <div id="aiSearchStatus" class="ai-search-status" role="status" aria-live="polite"></div>
+            <section id="aiAnswerPanel" class="ai-answer-panel" aria-label="AI 검색 답변" hidden>
+                <div class="ai-answer-title"><span class="ai-answer-mark" aria-hidden="true">✦</span> 검색 결과</div>
+                <div id="aiAnswerText" class="ai-answer-text"></div>
+                <div class="ai-answer-footnote">주차 가능 대수와 데이터 갱신 시각은 원본 API 응답에 따라 달라질 수 있습니다.</div>
+            </section>
+        </section>
+
         <main id="parkingList" class="parking-list" aria-live="polite"></main>
 
         <div id="paging" class="paging" aria-label="주차장 목록 페이지 이동">
@@ -95,6 +132,7 @@
     </div>
 
     <script src="app.js"></script>
+    <script src="ai-search.js" defer></script>
     <script>
     (() => {
         const installBtn = document.getElementById("installBtn");

@@ -1,12 +1,13 @@
 /* 부산 주차장 PWA service worker
  * Caches only static app-shell files. /api/* is always network-only so live parking data is never served from this cache.
  */
-const CACHE_NAME = "busan-parking-pwa-static-v1";
+const CACHE_NAME = "busan-parking-pwa-static-v2";
 const APP_SHELL = [
     "/",
     "/index.html",
     "/style.css",
     "/app.js",
+    "/ai-search.js",
     "/manifest.webmanifest"
 ];
 
@@ -72,7 +73,7 @@ self.addEventListener("fetch", (event) => {
     }
 
     // Static assets: return cached files quickly and refresh their cache in the background.
-    const isAppAsset = ["/", "/index.html", "/style.css", "/app.js", "/manifest.webmanifest"].includes(url.pathname);
+    const isAppAsset = ["/", "/index.html", "/style.css", "/app.js", "/ai-search.js", "/manifest.webmanifest"].includes(url.pathname);
     if (!isAppAsset) return;
 
     const cachePromise = caches.open(CACHE_NAME);

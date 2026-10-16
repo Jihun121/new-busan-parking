@@ -3,13 +3,11 @@
   "name": "busan-parking-mcp",
   "main": "server.js",
   "compatibility_date": "2026-10-16",
-  "compatibility_flags": [
-    "nodejs_compat"
-  ],
+  "compatibility_flags": ["nodejs_compat"],
   "observability": {
     "enabled": true
   },
   "vars": {
-    "PARKING_API_URL": "https://new-busan-parking-dmu.pages.dev/api/parking"
+    "PARKING_API_URL": "https://REPLACE-WITH-YOUR-PAGES-PROJECT.pages.dev/api/parking"
   }
 }

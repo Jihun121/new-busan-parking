@@ -11,3 +11,8 @@
 7. `npx wrangler login` 후 `npm run deploy`로 별도 Worker를 배포합니다.
 
 자세한 명령과 테스트 방법은 [`mcp/README.md`](mcp/README.md)를 확인하세요.
+
+
+## Gemini AI 검색 통합
+
+웹사이트 AI 검색은 `functions/api/ai-search.js`에서 Gemini Interactions API를 호출하고, 배포된 원격 MCP 서버의 `/mcp` 엔드포인트를 연결합니다. 환경변수 설정과 무료 사용 정책은 `README_GEMINI_AI.md`를 확인하세요.
