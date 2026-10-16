@@ -4,9 +4,105 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#f6f8fb">
+    <meta name="theme-color" content="#175cd3">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="부산주차장">
     <title>부산 공영주차장 현황</title>
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='128' fill='%23175cd3'/%3E%3Ctext x='256' y='275' dominant-baseline='central' text-anchor='middle' fill='%23ffffff' font-family='sans-serif' font-size='300' font-weight='800'%3EP%3C/text%3E%3C/svg%3E">
+    <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='128' fill='%23175cd3'/%3E%3Ctext x='256' y='275' dominant-baseline='central' text-anchor='middle' fill='%23ffffff' font-family='sans-serif' font-size='300' font-weight='800'%3EP%3C/text%3E%3C/svg%3E">
     <link rel="stylesheet" href="style.css">
+    <style>
+        .pwa-action-group {
+            margin-left: auto;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .pwa-action-group .refresh-btn {
+            margin-left: 0;
+        }
+
+        .install-btn {
+            min-height: 42px;
+            padding: 0 16px;
+            border-radius: 11px;
+            border: 1px solid var(--accent);
+            background: var(--accent);
+            color: #ffffff;
+            font-weight: 750;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 7px;
+            cursor: pointer;
+            box-shadow: 0 4px 12px rgba(23, 92, 211, 0.18);
+            transition: transform 0.15s ease, background-color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+        }
+
+        .install-btn:hover:not(:disabled) {
+            background: var(--accent-dark);
+            border-color: var(--accent-dark);
+            transform: translateY(-1px);
+        }
+
+        .install-btn[hidden] {
+            display: none !important;
+        }
+
+        .pwa-toast {
+            position: fixed;
+            left: 50%;
+            bottom: 24px;
+            transform: translateX(-50%) translateY(12px);
+            max-width: min(92vw, 440px);
+            padding: 12px 18px;
+            border-radius: 12px;
+            background: rgba(23, 32, 51, 0.94);
+            color: #ffffff;
+            font-size: 13px;
+            font-weight: 600;
+            line-height: 1.5;
+            text-align: center;
+            box-shadow: 0 12px 28px rgba(15, 23, 42, 0.22);
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s ease, transform 0.2s ease;
+            z-index: 1000;
+        }
+
+        .pwa-toast.show {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+        }
+
+        @media (max-width: 900px) {
+            .pwa-action-group {
+                margin-left: 0;
+            }
+        }
+
+        @media (max-width: 700px) {
+            .pwa-action-group {
+                grid-column: 1 / -1;
+                width: 100%;
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+            }
+
+            .pwa-action-group .install-btn,
+            .pwa-action-group .refresh-btn {
+                width: 100%;
+            }
+
+            .pwa-action-group .install-btn[hidden] + .refresh-btn {
+                grid-column: 1 / -1;
+            }
+        }
+    </style>
 </head>
 
 <body>
@@ -53,10 +149,17 @@
                     </select>
                 </div>
 
-                <button id="refreshBtn" class="refresh-btn" type="button">
-                    <span aria-hidden="true">↻</span>
-                    <span class="refresh-label">최신 정보 갱신</span>
-                </button>
+                <div class="pwa-action-group">
+                    <button id="installBtn" class="install-btn" type="button" hidden aria-label="앱 설치">
+                        <span aria-hidden="true">⬇</span>
+                        <span class="install-label">앱 설치</span>
+                    </button>
+
+                    <button id="refreshBtn" class="refresh-btn" type="button">
+                        <span aria-hidden="true">↻</span>
+                        <span class="refresh-label">최신 정보 갱신</span>
+                    </button>
+                </div>
             </div>
         </section>
 
@@ -82,7 +185,88 @@
         </div>
     </div>
 
+    <div id="pwaToast" class="pwa-toast" role="status" aria-live="polite" hidden></div>
+
     <script src="app.js"></script>
+    <script>
+        (function () {
+            const installBtn = document.getElementById("installBtn");
+            const pwaToast = document.getElementById("pwaToast");
+            let deferredPrompt = null;
+            let toastTimer = null;
+
+            function showPwaToast(message) {
+                if (!pwaToast) return;
+                pwaToast.textContent = message;
+                pwaToast.hidden = false;
+                requestAnimationFrame(() => {
+                    pwaToast.classList.add("show");
+                });
+                clearTimeout(toastTimer);
+                toastTimer = setTimeout(() => {
+                    pwaToast.classList.remove("show");
+                    setTimeout(() => {
+                        pwaToast.hidden = true;
+                    }, 200);
+                }, 3500);
+            }
+
+            function isStandaloneMode() {
+                return window.matchMedia("(display-mode: standalone)").matches ||
+                    window.navigator.standalone === true;
+            }
+
+            // 설치 가능 이벤트(beforeinstallprompt) 감지 시 설치 버튼 표시
+            window.addEventListener("beforeinstallprompt", (event) => {
+                event.preventDefault();
+                deferredPrompt = event;
+                if (installBtn && !isStandaloneMode()) {
+                    installBtn.hidden = false;
+                }
+            });
+
+            // 설치 버튼 클릭 시 설치 프롬프트 실행
+            if (installBtn) {
+                installBtn.addEventListener("click", async () => {
+                    if (!deferredPrompt) {
+                        showPwaToast("브라우저 주소창의 설치 아이콘 또는 메뉴에서 '홈 화면에 추가'를 선택해주세요.");
+                        return;
+                    }
+
+                    deferredPrompt.prompt();
+                    const { outcome } = await deferredPrompt.userChoice;
+                    deferredPrompt = null;
+
+                    if (outcome === "accepted") {
+                        installBtn.hidden = true;
+                    }
+                });
+            }
+
+            // 앱 설치 완료 시 버튼 숨김 및 안내
+            window.addEventListener("appinstalled", () => {
+                deferredPrompt = null;
+                if (installBtn) {
+                    installBtn.hidden = true;
+                }
+                showPwaToast("부산 공영주차장 앱이 홈 화면에 설치되었습니다.");
+            });
+
+            // 서비스 워커 등록
+            if ("serviceWorker" in navigator) {
+                window.addEventListener("load", () => {
+                    navigator.serviceWorker
+                        .register("./service-worker.js")
+                        .then((registration) => {
+                            console.log("Service Worker 등록 성공:", registration.scope);
+                        })
+                        .catch((error) => {
+                            console.warn("Service Worker 등록 실패:", error);
+                        });
+                });
+            }
+        })();
+    </script>
 </body>
 
 </html>
