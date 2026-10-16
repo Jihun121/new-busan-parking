@@ -772,3 +772,72 @@ input:disabled {
         justify-content: flex-start;
     }
 }
+
+/* PWA install control */
+.pwa-install-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin: 18px auto 0;
+}
+
+.install-app-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 42px;
+    padding: 0 18px;
+    border: 1px solid rgba(23, 92, 211, 0.12);
+    border-radius: 999px;
+    background: var(--accent);
+    color: #fff;
+    font-weight: 800;
+    box-shadow: 0 6px 16px rgba(23, 92, 211, 0.18);
+    cursor: pointer;
+    transition: transform 0.15s ease, background-color 0.15s ease, opacity 0.15s ease;
+}
+
+.install-app-btn:hover:not(:disabled) {
+    background: var(--accent-dark);
+    transform: translateY(-1px);
+}
+
+.install-app-btn:focus-visible {
+    outline: 3px solid rgba(23, 92, 211, 0.24);
+    outline-offset: 3px;
+}
+
+.install-app-btn:disabled {
+    cursor: default;
+    opacity: 0.78;
+}
+
+.pwa-install-status {
+    max-width: 560px;
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.5;
+    text-align: left;
+}
+
+@media (max-width: 620px) {
+    .pwa-install-row {
+        flex-direction: column;
+        gap: 8px;
+        margin-top: 15px;
+    }
+
+    .install-app-btn {
+        width: min(100%, 280px);
+    }
+
+    .pwa-install-status {
+        max-width: 340px;
+        text-align: center;
+        font-size: 12px;
+    }
+}
+
