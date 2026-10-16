@@ -1,0 +1,13 @@
+# LOCAL TEST ONLY: rename/copy this file to .dev.vars and fill in your own values.
+# Do not commit .dev.vars or add it to Cloudflare Production/Preview variables.
+AI_PROVIDER=ollama
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_MODEL=qwen3:8b
+
+# Existing, already-deployed Cloudflare MCP Worker endpoint.
+BUSAN_PARKING_MCP_URL=https://REPLACE-WITH-YOUR-MCP-WORKER.workers.dev/mcp
+
+# Optional for the site's regular parking list when running the whole Pages site locally.
+# Use the values you already use for Pages; the MCP tool queries go to the remote MCP Worker.
+BUSAN_API_KEY=REPLACE_WITH_YOUR_EXISTING_API_KEY
+BUSAN_FACILITY_API_KEY=

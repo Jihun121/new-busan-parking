@@ -33,6 +33,13 @@ export async function onRequestPost(context) {
             return json({ error: `질문은 ${MAX_QUERY_LENGTH}자 이내로 입력해 주세요.`, code: "QUERY_TOO_LONG" }, 400, headers);
         }
 
+        // Local-only model switch. Set AI_PROVIDER=ollama in the root .dev.vars file
+        // and run the Pages site with `wrangler pages dev`; a deployed Pages Function
+        // cannot reach the developer's own 127.0.0.1 Ollama server.
+        if (String(env.AI_PROVIDER || "").trim().toLowerCase() === "ollama") {
+            return await handleOllamaQuery(query, env, headers);
+        }
+
         const config = getConfig(env);
         if (config.error) return json(config.error.body, config.error.status, headers);
 
@@ -170,6 +177,371 @@ export async function onRequestGet(context) {
         console.error("AI search polling failed:", safeDiagnosticText(error?.message || String(error), 240));
         return json({ error: "AI 검색 결과를 확인하는 중 서버 오류가 발생했습니다.", code: "AI_SEARCH_POLL_INTERNAL_ERROR" }, 500, headers);
     }
+}
+
+const OLLAMA_DEFAULT_MODEL = "qwen3:8b";
+const OLLAMA_CHAT_TIMEOUT_MS = 150_000;
+const MCP_REQUEST_TIMEOUT_MS = 25_000;
+const MAX_OLLAMA_ROUNDS = 5;
+const MAX_OLLAMA_TOOL_CALLS = 5;
+const MAX_TOOL_RESULT_CHARS = 16_000;
+const MCP_PROTOCOL_VERSION = "2025-03-26";
+
+const OLLAMA_PARKING_TOOLS = [
+    {
+        type: "function",
+        function: {
+            name: "search_parking",
+            description: "부산 공영주차장을 이름 또는 주소 일부로 검색합니다. 주차장 목록을 찾을 때 사용합니다.",
+            parameters: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                    query: { type: "string", description: "주차장명 또는 주소 일부. 예: 해운대구, 부산시청" },
+                    limit: { type: "integer", minimum: 1, maximum: 20, description: "반환할 결과 수, 기본 10" }
+                }
+            }
+        }
+    },
+    {
+        type: "function",
+        function: {
+            name: "find_available_parking",
+            description: "부산 공영주차장 중 최소 빈자리 수 조건을 만족하는 곳을 찾아 빈자리 많은 순으로 반환합니다.",
+            parameters: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                    region: { type: "string", description: "선택적 지역/동네/주소 검색어. 예: 해운대구" },
+                    minAvailable: { type: "integer", minimum: 0, maximum: 10000, description: "최소 주차 가능 대수, 기본 1" },
+                    limit: { type: "integer", minimum: 1, maximum: 20, description: "반환할 결과 수, 기본 10" },
+                    scanPages: { type: "integer", minimum: 1, maximum: 5, description: "조회 페이지 수, 기본 3, 최대 5" }
+                }
+            }
+        }
+    },
+    {
+        type: "function",
+        function: {
+            name: "get_parking_detail",
+            description: "주차장 코드(parkgcd) 또는 이름으로 주소, 요금, 운영시간, 좌표, 주차현황을 조회합니다.",
+            parameters: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                    parkingCode: { type: "string", description: "주차장 코드(parkgcd), 알고 있으면 우선 사용" },
+                    name: { type: "string", description: "주차장 이름 또는 이름 일부" },
+                    refresh: { type: "boolean", description: "true이면 최신 실시간 정보 갱신을 시도" }
+                }
+            }
+        }
+    }
+];
+
+const ALLOWED_OLLAMA_TOOLS = new Set(OLLAMA_PARKING_TOOLS.map((tool) => tool.function.name));
+
+async function handleOllamaQuery(query, env, headers) {
+    const config = getOllamaConfig(env);
+    if (config.error) return json(config.error.body, config.error.status, headers);
+
+    try {
+        const messages = [
+            { role: "system", content: systemInstruction() + "\n\n로컬 Ollama로 동작합니다. 주차장에 대한 구체적 사실은 반드시 MCP 도구 결과에 근거하세요. 한 번의 답변에서 꼭 필요한 도구만 호출하고, 동일한 조회를 반복하지 마세요." },
+            { role: "user", content: query }
+        ];
+        const callMcpTool = createMcpToolCaller(config.mcpUrl);
+        let toolCallCount = 0;
+
+        for (let round = 0; round < MAX_OLLAMA_ROUNDS; round += 1) {
+            const completion = await fetchOllamaChat(config, messages);
+            const message = completion?.message;
+            if (!message || typeof message !== "object") {
+                return json({ error: "Ollama가 올바른 대화 응답을 반환하지 않았습니다.", code: "OLLAMA_INVALID_RESPONSE", model: config.model }, 502, headers);
+            }
+
+            const toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
+            if (toolCalls.length === 0) {
+                const answer = String(message.content || "").trim();
+                if (!answer) {
+                    return json({ error: "Ollama에서 텍스트 답변을 받지 못했습니다.", code: "OLLAMA_EMPTY_ANSWER", model: config.model }, 502, headers);
+                }
+                if (toolCallCount === 0) {
+                    return json({
+                        error: "로컬 모델이 주차장 조회 도구를 호출하지 않았습니다. 지역, 주차장 이름 또는 최소 빈자리 조건을 포함해 질문해 주세요.",
+                        code: "OLLAMA_NO_TOOL_CALL",
+                        model: config.model,
+                        detail: answer.slice(0, 500)
+                    }, 422, headers);
+                }
+                return json({
+                    answer,
+                    model: config.model,
+                    provider: "Ollama (local)",
+                    status: "completed",
+                    toolServer: "busan_parking",
+                    toolCalls: toolCallCount
+                }, 200, headers);
+            }
+
+            // Preserve the exact assistant tool-call message so the local model can match
+            // each subsequent role=tool result with the requested function call.
+            messages.push({
+                role: "assistant",
+                content: String(message.content || ""),
+                tool_calls: toolCalls
+            });
+
+            for (const toolCall of toolCalls) {
+                const name = String(toolCall?.function?.name || "");
+                let args = toolCall?.function?.arguments ?? {};
+                if (typeof args === "string") {
+                    try { args = JSON.parse(args); }
+                    catch { args = {}; }
+                }
+                if (!args || typeof args !== "object" || Array.isArray(args)) args = {};
+
+                let toolOutput;
+                if (!ALLOWED_OLLAMA_TOOLS.has(name)) {
+                    toolOutput = JSON.stringify({ error: true, message: "허용되지 않은 도구입니다." });
+                } else if (toolCallCount >= MAX_OLLAMA_TOOL_CALLS) {
+                    toolOutput = JSON.stringify({ error: true, message: `도구 호출 제한(${MAX_OLLAMA_TOOL_CALLS}회)에 도달했습니다. 현재까지 받은 결과만 사용하세요.` });
+                } else {
+                    toolCallCount += 1;
+                    try {
+                        const result = await callMcpTool(name, args);
+                        toolOutput = JSON.stringify(result);
+                    } catch (error) {
+                        toolOutput = JSON.stringify({ error: true, message: safeDiagnosticText(error?.message || String(error), 700) });
+                    }
+                }
+                messages.push({
+                    role: "tool",
+                    tool_name: name || "unknown_tool",
+                    content: toolOutput.slice(0, MAX_TOOL_RESULT_CHARS)
+                });
+            }
+        }
+
+        return json({
+            error: "로컬 모델이 정해진 도구 실행 횟수 안에 답변을 마치지 못했습니다. 질문을 더 구체적으로 바꿔 다시 시도해 주세요.",
+            code: "OLLAMA_TOOL_LOOP_LIMIT",
+            model: config.model,
+            toolCalls: MAX_OLLAMA_TOOL_CALLS
+        }, 504, headers);
+    } catch (error) {
+        const diagnostic = getFetchDiagnostic(error);
+        console.error("Local Ollama AI search failed", JSON.stringify({ code: error?.code || "OLLAMA_ERROR", ...diagnostic }));
+        const status = error?.code === "OLLAMA_TIMEOUT" || error?.code === "MCP_TIMEOUT" ? 504 : 502;
+        return json({
+            error: error?.userMessage || "로컬 Ollama 또는 원격 MCP 서버에 연결하지 못했습니다.",
+            code: error?.code || "OLLAMA_LOCAL_ERROR",
+            model: config.model,
+            ...(error?.detail ? { detail: safeDiagnosticText(error.detail, 600) } : {}),
+            diagnostic
+        }, status, headers);
+    }
+}
+
+function getOllamaConfig(env) {
+    const baseUrl = String(env.OLLAMA_BASE_URL || "http://127.0.0.1:11434").trim().replace(/\/+$/, "");
+    let url;
+    try { url = new URL(baseUrl); }
+    catch {
+        return { error: { status: 503, body: { error: "OLLAMA_BASE_URL 주소가 올바르지 않습니다.", code: "OLLAMA_URL_INVALID" } } };
+    }
+    const localHosts = new Set(["127.0.0.1", "localhost", "[::1]", "::1"]);
+    if (url.protocol !== "http:" || !localHosts.has(url.hostname)) {
+        return { error: { status: 503, body: { error: "보안을 위해 로컬 테스트 모드에서는 OLLAMA_BASE_URL을 http://127.0.0.1:11434 또는 localhost로 설정해야 합니다.", code: "OLLAMA_LOCAL_ONLY" } } };
+    }
+
+    const mcpUrl = String(env.BUSAN_PARKING_MCP_URL || "").trim();
+    if (!isValidMcpUrl(mcpUrl)) {
+        return { error: { status: 503, body: { error: "배포된 MCP Worker의 HTTPS /mcp 주소를 BUSAN_PARKING_MCP_URL에 설정해 주세요.", code: "MCP_URL_NOT_CONFIGURED" } } };
+    }
+    const model = String(env.OLLAMA_MODEL || OLLAMA_DEFAULT_MODEL).trim() || OLLAMA_DEFAULT_MODEL;
+    if (model.length > 120) {
+        return { error: { status: 400, body: { error: "OLLAMA_MODEL 이름이 너무 깁니다.", code: "OLLAMA_MODEL_INVALID" } } };
+    }
+    return { baseUrl, mcpUrl, model };
+}
+
+async function fetchOllamaChat(config, messages) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), OLLAMA_CHAT_TIMEOUT_MS);
+    let response;
+    let text = "";
+    try {
+        response = await fetch(`${config.baseUrl}/api/chat`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Accept: "application/json" },
+            body: JSON.stringify({
+                model: config.model,
+                messages,
+                tools: OLLAMA_PARKING_TOOLS,
+                stream: false,
+                think: false,
+                keep_alive: "10m",
+                options: { temperature: 0.1, num_predict: 800 }
+            }),
+            signal: controller.signal
+        });
+        text = await response.text();
+    } catch (error) {
+        if (controller.signal.aborted || error?.name === "AbortError") {
+            const timeoutError = new Error(`Ollama 응답이 ${OLLAMA_CHAT_TIMEOUT_MS / 1000}초 안에 도착하지 않았습니다.`);
+            timeoutError.code = "OLLAMA_TIMEOUT";
+            timeoutError.userMessage = "로컬 Ollama 응답 시간이 초과되었습니다. 더 작은 모델(qwen3:4b)을 사용하거나 모델이 처음 로드될 때까지 기다려 주세요.";
+            throw timeoutError;
+        }
+        const connectionError = new Error("로컬 Ollama에 연결하지 못했습니다. Ollama가 실행 중인지 확인해 주세요.");
+        connectionError.code = "OLLAMA_CONNECTION_FAILED";
+        connectionError.userMessage = "로컬 Ollama에 연결하지 못했습니다. Ollama를 실행한 뒤 http://127.0.0.1:11434 에서 연결을 확인해 주세요.";
+        connectionError.cause = error;
+        throw connectionError;
+    } finally {
+        clearTimeout(timer);
+    }
+
+    let payload = null;
+    try { payload = JSON.parse(text); } catch { /* handled below */ }
+    if (!response.ok) {
+        const detail = String(payload?.error || text || `HTTP ${response.status}`).slice(0, 700);
+        const error = new Error(detail);
+        error.code = response.status === 404 && /model/i.test(detail) ? "OLLAMA_MODEL_NOT_FOUND" : "OLLAMA_HTTP_ERROR";
+        error.detail = detail;
+        error.userMessage = error.code === "OLLAMA_MODEL_NOT_FOUND"
+            ? `로컬 모델 '${config.model}'을 찾을 수 없습니다. 터미널에서 ollama pull ${config.model}을 실행해 주세요.`
+            : `Ollama가 HTTP ${response.status} 오류를 반환했습니다.`;
+        throw error;
+    }
+    if (!payload) {
+        const error = new Error("Ollama 응답을 JSON으로 읽을 수 없습니다.");
+        error.code = "OLLAMA_INVALID_RESPONSE";
+        throw error;
+    }
+    return payload;
+}
+
+function createMcpToolCaller(mcpUrl) {
+    let initialized = false;
+    let sessionId = "";
+    let protocolVersion = MCP_PROTOCOL_VERSION;
+    let nextId = 1;
+
+    async function postRpc(payload, { notification = false } = {}) {
+        const headers = {
+            "Content-Type": "application/json",
+            Accept: "application/json, text/event-stream"
+        };
+        if (sessionId) headers["Mcp-Session-Id"] = sessionId;
+        if (initialized) headers["Mcp-Protocol-Version"] = protocolVersion;
+
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), MCP_REQUEST_TIMEOUT_MS);
+        try {
+            const response = await fetch(mcpUrl, {
+                method: "POST",
+                headers,
+                body: JSON.stringify(payload),
+                signal: controller.signal
+            });
+            const responseSession = response.headers.get("Mcp-Session-Id");
+            if (responseSession) sessionId = responseSession;
+            const responseProtocol = response.headers.get("Mcp-Protocol-Version");
+            if (responseProtocol) protocolVersion = responseProtocol;
+            const text = await response.text();
+            if (notification && (response.status === 202 || response.status === 204 || !text.trim())) return null;
+            if (!response.ok) {
+                const error = new Error(`MCP HTTP ${response.status}: ${text.slice(0, 600)}`);
+                error.code = "MCP_HTTP_ERROR";
+                throw error;
+            }
+            const rpc = parseMcpRpcResponse(text, response.headers.get("content-type") || "");
+            if (!rpc) {
+                const error = new Error("MCP 서버가 JSON-RPC 응답을 반환하지 않았습니다.");
+                error.code = "MCP_INVALID_RESPONSE";
+                throw error;
+            }
+            if (rpc.error) {
+                const error = new Error(String(rpc.error.message || "MCP JSON-RPC 오류").slice(0, 700));
+                error.code = `MCP_RPC_${rpc.error.code ?? "ERROR"}`;
+                throw error;
+            }
+            return rpc;
+        } catch (error) {
+            if (controller.signal.aborted || error?.name === "AbortError") {
+                const timeoutError = new Error(`MCP 서버 요청 시간이 ${MCP_REQUEST_TIMEOUT_MS / 1000}초를 초과했습니다.`);
+                timeoutError.code = "MCP_TIMEOUT";
+                throw timeoutError;
+            }
+            throw error;
+        } finally {
+            clearTimeout(timer);
+        }
+    }
+
+    return async (name, args) => {
+        if (!initialized) {
+            const init = await postRpc({
+                jsonrpc: "2.0",
+                id: nextId++,
+                method: "initialize",
+                params: {
+                    protocolVersion: MCP_PROTOCOL_VERSION,
+                    capabilities: {},
+                    clientInfo: { name: "busan-parking-local-ollama", version: "1.0.0" }
+                }
+            });
+            const negotiated = init?.result?.protocolVersion;
+            if (negotiated) protocolVersion = negotiated;
+            initialized = true;
+            await postRpc({ jsonrpc: "2.0", method: "notifications/initialized" }, { notification: true });
+        }
+        const response = await postRpc({
+            jsonrpc: "2.0",
+            id: nextId++,
+            method: "tools/call",
+            params: { name, arguments: args }
+        });
+        const result = response?.result;
+        if (!result) return { error: true, message: "MCP 도구 결과가 비어 있습니다." };
+        if (result.structuredContent !== undefined) return result.structuredContent;
+        if (Array.isArray(result.content)) {
+            const text = result.content.map((part) => part?.text || "").filter(Boolean).join("\n");
+            return result.isError ? { error: true, message: text || "MCP 도구 실행 실패" } : parseToolText(text);
+        }
+        return result;
+    };
+}
+
+function parseMcpRpcResponse(text, contentType) {
+    if (!text || !text.trim()) return null;
+    if (contentType.includes("text/event-stream") || text.includes("data:")) {
+        const records = [];
+        let data = [];
+        for (const line of text.split(/\r?\n/)) {
+            if (line.startsWith("data:")) data.push(line.slice(5).trim());
+            else if (line === "" && data.length) {
+                records.push(data.join("\n"));
+                data = [];
+            }
+        }
+        if (data.length) records.push(data.join("\n"));
+        for (let index = records.length - 1; index >= 0; index -= 1) {
+            try {
+                const value = JSON.parse(records[index]);
+                if (value && (value.result !== undefined || value.error !== undefined || value.id !== undefined)) return value;
+            } catch { /* ignore non-JSON SSE event */ }
+        }
+        return null;
+    }
+    try { return JSON.parse(text); } catch { return null; }
+}
+
+function parseToolText(text) {
+    if (!text) return {};
+    try { return JSON.parse(text); }
+    catch { return { text: text.slice(0, MAX_TOOL_RESULT_CHARS) }; }
 }
 
 function systemInstruction() {

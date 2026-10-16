@@ -9,7 +9,7 @@
 
     if (!form || !input || !button || !status || !answerPanel || !answerText) return;
 
-    const CREATE_FETCH_TIMEOUT_MS = 18_000;
+    const CREATE_FETCH_TIMEOUT_MS = 180_000; // Local Ollama may need time to load the model and finish tool calls.
     const POLL_FETCH_TIMEOUT_MS = 45_000;
     const MAX_TOTAL_WAIT_MS = 180_000;
     const SAME_QUERY_CACHE_MS = 30_000;
@@ -84,7 +84,7 @@
 
         while (Date.now() - startedAt < MAX_TOTAL_WAIT_MS) {
             const elapsedSeconds = Math.floor((Date.now() - startedAt) / 1000);
-            setStatus(`Gemini가 주차장 도구를 실행하고 답변을 준비하고 있습니다… ${elapsedSeconds}초`, "loading");
+            setStatus(`AI 모델이 주차장 도구를 실행하고 답변을 준비하고 있습니다… ${elapsedSeconds}초`, "loading");
             await delay(POLL_INTERVAL_MS);
 
             let response;
@@ -167,12 +167,12 @@
             Date.now() - lastSuccessfulQuery.timestamp < SAME_QUERY_CACHE_MS) {
             answerText.textContent = lastSuccessfulQuery.answer;
             answerPanel.hidden = false;
-            setStatus("같은 질문의 직전 답변을 재사용했습니다. 30초 안에는 추가 Gemini 요청을 보내지 않습니다.", "");
+            setStatus("같은 질문의 직전 답변을 재사용했습니다. 30초 안에는 추가 모델 요청을 보내지 않습니다.", "");
             return;
         }
 
         setBusy(true);
-        setStatus("Gemini가 AI 검색 작업을 시작하고 있습니다…", "loading");
+        setStatus("AI 모델이 MCP 주차장 도구에 연결하고 있습니다. 로컬 첫 실행은 모델 로딩 때문에 오래 걸릴 수 있습니다…", "loading");
         answerPanel.hidden = true;
         answerText.textContent = "";
 
@@ -187,9 +187,9 @@
 
             let result;
             if (payload?.answer && typeof payload.answer === "string") {
-                result = { answer: payload.answer, model: payload.model || "Gemini" };
+                result = { answer: payload.answer, model: payload.model || "AI 모델", provider: payload.provider || "" };
             } else if (payload?.interactionId && (response.status === 202 || payload.status === "in_progress" || payload.status === "queued")) {
-                result = await waitForInteraction(payload.interactionId, payload.model || "Gemini");
+                result = await waitForInteraction(payload.interactionId, payload.model || "AI 모델");
             } else {
                 makeHttpError(response, payload || {});
             }
@@ -199,10 +199,10 @@
             lastSuccessfulQuery = {
                 normalizedQuery,
                 answer: result.answer,
-                model: result.model || "Gemini",
+                model: result.model || "AI 모델",
                 timestamp: Date.now()
             };
-            setStatus(`검색 완료 · ${result.model || "Gemini"} + MCP`, "");
+            setStatus(`검색 완료 · ${result.provider || result.model || "AI 모델"} + MCP`, "");
         } catch (error) {
             console.error("AI parking search failed:", error);
             setStatus(error?.message || "AI 검색 중 오류가 발생했습니다.", "error");
