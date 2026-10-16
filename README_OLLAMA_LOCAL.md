@@ -20,14 +20,15 @@
    ollama --version
    ```
 
-3. 도구 호출을 지원하는 Qwen3 모델을 내려받습니다. 기본값은 약 5.2 GB인 `qwen3:8b`입니다.
+3. 이미 설치하신 도구 호출 지원 모델 `qwen3.5:4b`를 사용하도록 기본 설정했습니다. Ollama 모델 목록에 `qwen3.5:4b`가 있는지 먼저 확인합니다.
 
    ```powershell
-   ollama pull qwen3:8b
    ollama list
+   # 목록에 qwen3.5:4b가 없다면 다음을 실행하세요.
+   ollama pull qwen3.5:4b
    ```
 
-   메모리가 적거나 더 가벼운 모델이 필요하면 `qwen3:4b`를 사용할 수 있습니다. 이 경우 `.dev.vars`의 `OLLAMA_MODEL`도 `qwen3:4b`로 바꾸세요. Qwen3 계열은 Ollama에서 도구 호출 기능을 제공합니다.
+   `qwen3.5:4b`는 Ollama 라이브러리에서 도구 호출을 지원합니다. 모델 이름은 `ollama list`에 표시되는 이름과 `.dev.vars`의 `OLLAMA_MODEL` 값을 정확히 일치시켜야 합니다.
 
 4. Ollama가 실행 중인지 확인합니다. 브라우저에서 `http://127.0.0.1:11434`를 열어 `Ollama is running`이 표시되는지 확인할 수 있습니다. (API 루트에 응답이 나오지 않는 버전이라면 다음 단계의 `ollama list`가 정상인지 확인하세요.)
 
@@ -45,7 +46,7 @@ notepad .dev.vars
 ```dotenv
 AI_PROVIDER=ollama
 OLLAMA_BASE_URL=http://127.0.0.1:11434
-OLLAMA_MODEL=qwen3:8b
+OLLAMA_MODEL=qwen3.5:4b
 BUSAN_PARKING_MCP_URL=https://YOUR-DEPLOYED-MCP-WORKER.workers.dev/mcp
 BUSAN_API_KEY=YOUR_EXISTING_BUSAN_API_KEY
 BUSAN_FACILITY_API_KEY=
@@ -95,14 +96,14 @@ http://127.0.0.1:8788
 설정된 모델을 내려받습니다.
 
 ```powershell
-ollama pull qwen3:8b
+ollama pull qwen3.5:4b
 ```
 
 모델명을 변경했다면 `.dev.vars`의 `OLLAMA_MODEL`과 정확히 일치해야 합니다.
 
 ### `OLLAMA_NO_TOOL_CALL`
 
-모델이 질문에 답하면서 MCP 도구를 호출하지 않은 경우입니다. 지역과 조건을 구체적으로 적어 다시 질문하거나, 도구 호출을 지원하는 Qwen3 모델을 사용하세요.
+모델이 질문에 답하면서 MCP 도구를 호출하지 않은 경우입니다. 지역과 조건을 구체적으로 적어 다시 질문하거나, Ollama의 `qwen3.5:4b`처럼 도구 호출을 지원하는 모델을 사용하세요.
 
 ### `MCP_*` 오류
 

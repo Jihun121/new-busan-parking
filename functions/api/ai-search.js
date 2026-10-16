@@ -179,7 +179,7 @@ export async function onRequestGet(context) {
     }
 }
 
-const OLLAMA_DEFAULT_MODEL = "qwen3:8b";
+const OLLAMA_DEFAULT_MODEL = "qwen3.5:4b";
 const OLLAMA_CHAT_TIMEOUT_MS = 150_000;
 const MCP_REQUEST_TIMEOUT_MS = 25_000;
 const MAX_OLLAMA_ROUNDS = 5;
@@ -390,7 +390,7 @@ async function fetchOllamaChat(config, messages) {
         if (controller.signal.aborted || error?.name === "AbortError") {
             const timeoutError = new Error(`Ollama 응답이 ${OLLAMA_CHAT_TIMEOUT_MS / 1000}초 안에 도착하지 않았습니다.`);
             timeoutError.code = "OLLAMA_TIMEOUT";
-            timeoutError.userMessage = "로컬 Ollama 응답 시간이 초과되었습니다. 더 작은 모델(qwen3:4b)을 사용하거나 모델이 처음 로드될 때까지 기다려 주세요.";
+            timeoutError.userMessage = "로컬 Ollama 응답 시간이 초과되었습니다. 모델이 처음 로드될 때까지 기다리거나 PC의 메모리·성능 상태를 확인해 주세요.";
             throw timeoutError;
         }
         const connectionError = new Error("로컬 Ollama에 연결하지 못했습니다. Ollama가 실행 중인지 확인해 주세요.");
