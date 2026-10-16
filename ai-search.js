@@ -110,11 +110,26 @@
                 continue;
             }
             if (!response.ok) {
-                // Transient upstream polling errors shouldn't immediately discard an ongoing interaction.
-                if (["GEMINI_POLL_TIMEOUT", "GEMINI_CONNECTION_FAILED"].includes(payload?.code) && consecutiveTransientErrors < 3) {
+                // Gemini can temporarily return 500/502/503/504 while its backend is overloaded.
+                // Polling an existing interaction is an idempotent GET, so retry with backoff
+                // instead of dropping the user's in-progress query at the first provider error.
+                const upstreamStatus = Number(payload?.upstreamStatus || 0);
+                const transientProviderError =
+                    payload?.code === "GEMINI_UPSTREAM_ERROR" &&
+                    [500, 502, 503, 504].includes(upstreamStatus);
+                const transientTransportError = [
+                    "GEMINI_POLL_TIMEOUT",
+                    "GEMINI_CONNECTION_FAILED"
+                ].includes(payload?.code);
+
+                if ((transientProviderError || transientTransportError) && consecutiveTransientErrors < 5) {
                     consecutiveTransientErrors += 1;
-                    setStatus(`작업 상태 조회를 재시도하고 있습니다… (${consecutiveTransientErrors}/3)`, "loading");
-                    await delay(1_000 * consecutiveTransientErrors);
+                    const retryDelayMs = Math.min(750 * (2 ** (consecutiveTransientErrors - 1)), 8_000);
+                    const reason = transientProviderError
+                        ? `Gemini 서버가 일시적으로 혼잡합니다. 작업 상태를 다시 확인합니다… (${consecutiveTransientErrors}/5)`
+                        : `작업 상태 연결이 일시적으로 불안정합니다. 다시 확인합니다… (${consecutiveTransientErrors}/5)`;
+                    setStatus(reason, "loading");
+                    await delay(retryDelayMs);
                     continue;
                 }
                 makeHttpError(response, payload);

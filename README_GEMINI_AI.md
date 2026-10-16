@@ -134,3 +134,10 @@ Gemini Interactions API에서 `requires_action` 상태로 멈춘 작업을 오�
 브라우저는 여전히 Gemini 키를 받지 않으며, 기존 `GEMINI_API_KEY` Secret과 `BUSAN_PARKING_MCP_URL` 환경변수를 사용합니다. MCP Worker 코드는 바뀌지 않았으므로 이미 배포된 Worker의 재배포는 필요 없습니다. Pages 파일을 업데이트하고 다시 배포하세요.
 
 공식 참고: https://ai.google.dev/gemini-api/docs/function-calling/ · https://ai.google.dev/gemini-api/docs/interactions-overview · https://ai.google.dev/gemini-api/docs/background-execution
+
+
+## v14.6: 일시적인 Gemini 5xx 재시도
+
+Gemini 작업 상태 조회에서 공급자가 HTTP 500/502/503/504를 반환하면, 프런트엔드는 기존 interaction ID를 유지한 채 최대 5회 지수형 대기 후 같은 상태 조회를 재시도합니다. `GEMINI_POLL_TIMEOUT` 및 `GEMINI_CONNECTION_FAILED`도 같은 재시도 경로를 사용합니다. 새 Gemini 작업을 재생성하지 않으므로 중복 실행 위험을 늘리지 않습니다.
+
+이 재시도는 공급자 과부하가 일시적일 때 사용성을 높이지만, 지속적인 장애/할당량 문제를 없애지는 않습니다. 계속 실패하면 Gemini API 상태, 모델 가용성 및 AI Studio의 프로젝트 사용량 한도를 확인하세요.
