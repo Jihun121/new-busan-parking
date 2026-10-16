@@ -37,8 +37,23 @@ export function matchCityBasicInfo(facility, cityItems = []) {
         return unmatched(target.name ? "no-similar-name-candidate" : "no-comparable-identity", null, []);
     }
 
-    const best = candidates[0];
-    const second = candidates[1] || null;
+    // Similarity alone is not enough: never attach a station's opposite exit/side,
+    // another numbered section, or a more specific location to a generic name.
+    const eligibleCandidates = candidates.filter((candidate) =>
+        candidate.qualifierCompatibility === "compatible"
+    );
+    if (!eligibleCandidates.length) {
+        const hasConflict = candidates.some((candidate) =>
+            candidate.qualifierCompatibility === "conflict"
+        );
+        const failureReason = hasConflict
+            ? "location-qualifier-conflict"
+            : "location-qualifier-specificity-mismatch";
+        return unmatched(failureReason, candidates[0], candidates.slice(0, 3));
+    }
+
+    const best = eligibleCandidates[0];
+    const second = eligibleCandidates[1] || null;
     const margin = second ? best.score - second.score : best.score;
     const exactIdentity = [
         "management-number", "exact-name", "exact-core-name", "normalized-location-name"
@@ -243,11 +258,83 @@ function scoreCandidate(target, item) {
         nameSimilarity: Number(nameSimilarity.toFixed(3)),
         addressExact,
         addressPartial,
+        qualifierCompatibility: compareLocationQualifiers(target.name, name).status,
+        qualifierDetails: compareLocationQualifiers(target.name, name),
         roadAddress: cleanAddress(item?.roadAddress || item?.address) || null,
         lotAddress: cleanAddress(item?.lotAddress) || null,
         addressQuality: item?.addressQuality || (hasUsableAddress(item) ? "full-address" : (getBusanDistrict(item?.district, item?.address, item?.roadAddress, item?.lotAddress) ? "district-only" : "missing")),
         district: firstText(item?.district, getBusanDistrict(item?.address, item?.roadAddress, item?.lotAddress)) || null
     };
+}
+
+/**
+ * Extract location-specific qualifiers that must not be lost when normalizing names.
+ * Examples: station exit number, numbered section, north/south side, gate/position.
+ */
+function getLocationQualifierProfile(value) {
+    const raw = String(value || "").normalize("NFKC").toLowerCase().replace(/\s+/g, "");
+    const profile = {};
+
+    const directionMatch = raw.match(/남측|남쪽|남편|북측|북쪽|북편|동측|동쪽|동편|서측|서쪽|서편/);
+    if (directionMatch) {
+        const token = directionMatch[0];
+        profile.direction = token.startsWith("남") ? "south"
+            : token.startsWith("북") ? "north"
+            : token.startsWith("동") ? "east" : "west";
+    }
+
+    const exitMatch = raw.match(/(\d+)번(?:출구)?/);
+    if (exitMatch) profile.exitNumber = String(Number(exitMatch[1]));
+
+    const sectionMatch = raw.match(/(\d+)구역/);
+    if (sectionMatch) profile.sectionNumber = String(Number(sectionMatch[1]));
+
+    const dongMatch = raw.match(/(\d+)동/);
+    if (dongMatch) profile.dongNumber = String(Number(dongMatch[1]));
+
+    const sizeMatch = raw.match(/특대형|대형|소형|경차/);
+    if (sizeMatch) profile.vehicleClass = sizeMatch[0];
+
+    if (/고가(?:도로)?밑|고가하부|고가아래/.test(raw)) profile.position = "under-overpass";
+    else if (/후문|뒷문/.test(raw)) profile.position = "rear-gate";
+    else if (/정문/.test(raw)) profile.position = "front-gate";
+    else if (/옆|측면/.test(raw)) profile.position = "beside";
+    else if (/뒤|후면/.test(raw)) profile.position = "behind";
+    else if (/앞|전면/.test(raw)) profile.position = "front";
+
+    if (/주변복개/.test(raw)) profile.coveredArea = "surrounding-covered";
+    else if (/복개/.test(raw)) profile.coveredArea = "covered";
+
+    return profile;
+}
+
+/**
+ * A candidate is auto-matchable only if explicit location qualifiers agree and
+ * neither name is more specific than the other in a way that could change location.
+ */
+function compareLocationQualifiers(targetName, candidateName) {
+    const target = getLocationQualifierProfile(targetName);
+    const candidate = getLocationQualifierProfile(candidateName);
+    const dimensions = ["direction", "exitNumber", "sectionNumber", "dongNumber", "vehicleClass", "position", "coveredArea"];
+    const conflicts = [];
+    const targetMoreSpecific = [];
+    const candidateMoreSpecific = [];
+
+    for (const key of dimensions) {
+        const left = target[key];
+        const right = candidate[key];
+        if (left !== undefined && right !== undefined && left !== right) conflicts.push(key);
+        else if (left !== undefined && right === undefined) targetMoreSpecific.push(key);
+        else if (left === undefined && right !== undefined) candidateMoreSpecific.push(key);
+    }
+
+    let status = "compatible";
+    if (conflicts.length) status = "conflict";
+    else if (targetMoreSpecific.length && candidateMoreSpecific.length) status = "specificity-mismatch";
+    else if (targetMoreSpecific.length) status = "target-more-specific";
+    else if (candidateMoreSpecific.length) status = "candidate-more-specific";
+
+    return { status, conflicts, targetMoreSpecific, candidateMoreSpecific };
 }
 
 function nameVariants(value) {
@@ -317,7 +404,9 @@ function summarizeCandidate(candidate) {
         roadAddress: cleanAddress(candidate.roadAddress) || null,
         lotAddress: cleanAddress(candidate.lotAddress) || null,
         addressQuality: candidate.addressQuality || "missing",
-        district: candidate.district || null
+        district: candidate.district || null,
+        qualifierCompatibility: candidate.qualifierCompatibility || "compatible",
+        qualifierDetails: candidate.qualifierDetails || null
     };
 }
 
@@ -328,6 +417,10 @@ function normalizeName(value) {
 function normalizeCoreName(value) {
     return normalizeName(value)
         .replace(/부산광역시|부산시/g, "")
+        // Public-transit labels are prefixes, not part of the location identity.
+        .replace(/^(?:부산도시철도|도시철도|지하철|국철|철도)/g, "")
+        // Common local alias: "고가밑" and "고가도로 밑" describe the same kind of place.
+        .replace(/고가밑|고가하부|고가아래/g, "고가도로밑")
         .replace(/공영주차장|주차장|주차|공영/g, "");
 }
 

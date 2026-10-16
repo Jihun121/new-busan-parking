@@ -101,6 +101,8 @@ export async function onRequestGet(context) {
                 "city-record-names-missing": "부산광역시 레코드에 매칭 가능한 이름이 없음",
                 "best-candidate-below-threshold": "후보는 있으나 자동 연결 기준에 미달; candidates에 약한 유사 후보 표시",
                 "ambiguous-top-candidates": "상위 후보가 비슷해 잘못 연결할 위험이 있어 매칭하지 않음",
+                "location-qualifier-conflict": "역 출구 번호, 방향, 구역 등의 명시적 위치 조건이 후보와 다름",
+                "location-qualifier-specificity-mismatch": "한쪽 이름에만 위치 조건이 있어 안전하게 확정할 수 없음",
                 "matched-city-record-without-address": "레코드는 연결됐지만 유효한 상세 주소 필드가 없음"
             }
         },

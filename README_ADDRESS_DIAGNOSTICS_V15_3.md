@@ -46,3 +46,8 @@ http://127.0.0.1:8788/api/parking-diagnostics?refresh=1
 ## 공식 문서
 - https://www.data.go.kr/data/15004683/openapi.do
 - https://www.data.go.kr/data/15157490/openapi.do
+
+
+## v15.4 변경 사항
+
+v15.4에서는 교통수단 접두어를 제거한 핵심 이름 비교와 위치 한정자 보호를 추가했습니다. 특정 역 출구·남/북측·구역 번호가 서로 다르거나 한쪽 이름에서만 확인되면 매칭을 보류합니다. 상세 내용은 `README_ADDRESS_DIAGNOSTICS.md`를 참고하세요.
