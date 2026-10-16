@@ -15,7 +15,7 @@
 4. Gemini가 원격 MCP 도구를 호출해 기존 `/api/parking`에서 주차장 정보를 조회합니다.
 5. 한국어 답변을 브라우저에 표시합니다.
 
-브라우저로 Gemini API 키를 전송하지 않습니다. 요청은 `store: false`로 보내 Gemini Interactions API의 상호작용 리소스를 저장하지 않도록 했습니다. **다만 무료 등급에서는 입력·출력이 Google 제품 개선에 사용될 수 있다는 가격표 안내가 있으므로, 민감한 개인정보를 AI 검색창에 입력하지 않도록 안내하세요.** `store: false`는 상호작용 리소스 저장을 끄는 설정이지, 무료 등급 데이터 처리 정책을 무효화하는 설정은 아닙니다.
+브라우저로 Gemini API 키를 전송하지 않습니다. 백그라운드 실행 결과를 interaction ID로 조회하기 위해 요청은 `store: true`로 전송됩니다. 따라서 Gemini Interactions API가 상호작용을 저장할 수 있습니다. **민감한 개인정보나 비밀을 AI 검색창에 입력하지 마세요.** 데이터 처리 및 보관 기간은 Google의 현재 정책, 모델, 프로젝트 및 요금제에 따라 달라질 수 있으므로 AI Studio와 공식 문서에서 확인하세요.
 
 ## 사전 조건
 
@@ -104,8 +104,17 @@ Cloudflare 대시보드에서도 Pages 프로젝트의 Functions 로그에서 `G
 
 v14.3에서는 Google Gemini Interactions API의 `background: true`를 사용합니다. Pages Function은 작업을 시작하고 interaction ID를 반환하며, `ai-search.js`가 `/api/ai-search?interactionId=...`를 주기적으로 조회합니다. 상태 확인은 별도 짧은 HTTP 요청이므로 긴 모델/MCP 작업 하나가 브라우저 요청을 계속 붙잡지 않습니다. UI는 최대 3분 동안 결과를 기다리고 진행 상태를 표시합니다.
 
-`store: false` 설정을 유지합니다. Google 공식 문서에 따르면 background interaction은 결과 조회를 위해 최대 24시간 보관됩니다. 이 동작은 요청/응답 원문을 별도 애플리케이션 DB에 저장한다는 뜻은 아니며, 무료 등급 데이터 사용 정책은 별도로 적용됩니다.
+v14.4에서는 `store: true`를 사용합니다. 배포된 API가 `store=true is required for background interactions` 오류를 반환했기 때문입니다. 이 설정은 background interaction을 interaction ID로 조회하기 위해 필요합니다. Google Interactions API에 질문/응답 상호작용이 저장될 수 있으므로 민감한 개인정보를 입력하지 마세요. 보관 기간과 데이터 사용 조건은 Google의 현재 정책 및 프로젝트/요금제에 따라 달라질 수 있습니다.
 
 공식 참고: https://ai.google.dev/gemini-api/docs/background-execution
 
 배포 시 기존 `GEMINI_API_KEY` Secret과 `BUSAN_PARKING_MCP_URL` 환경변수를 그대로 사용합니다. MCP Worker는 변경되지 않았으므로 재배포할 필요가 없습니다. Pages 파일을 업데이트하고 Pages를 다시 배포하세요. 기존 PWA 아이콘 파일은 보존하세요.
+
+
+## v14.4 — 백그라운드 저장 설정 수정
+
+v14.3에서 `background: true`와 `store: false`를 함께 보냈지만, API가 `store=true is required for background interactions`라는 HTTP 400 오류를 반환했습니다. v14.4에서는 `store: true`로 수정하고 응답 메타데이터도 저장 설정과 일치시켰습니다.
+
+**개인정보 관련 변경:** Gemini Interactions API가 상호작용을 저장할 수 있습니다. 질문과 답변에는 개인 식별 정보, 연락처, API 키 또는 비밀을 입력하지 마세요. 보관 기간과 무료 등급 데이터 처리 조건은 Google 공식 문서 및 AI Studio의 현재 프로젝트 설정을 확인하세요.
+
+공식 문서: https://ai.google.dev/gemini-api/docs/background-execution · https://ai.google.dev/gemini-api/docs/interactions-overview

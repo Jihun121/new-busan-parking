@@ -1073,3 +1073,12 @@ input:disabled {
     .ai-prompt-chips { gap: 6px; }
     .ai-prompt-chip { font-size: 11px; }
 }
+
+
+/* Gemini storage disclosure */
+.ai-privacy-note {
+    margin: 8px 0 10px;
+    color: var(--muted, #64748b);
+    font-size: 0.78rem;
+    line-height: 1.5;
+}

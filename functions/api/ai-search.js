@@ -40,8 +40,9 @@ export async function onRequestPost(context) {
             model: config.model,
             input: query,
             background: true,
-            // Background interactions with store:false remain retrievable for 24 hours.
-            store: false,
+            // The Gemini API currently requires stored interactions for background execution.
+            // This enables polling by interaction ID; do not send sensitive personal information.
+            store: true,
             system_instruction: [
                 "당신은 부산 공영주차장 안내 도우미입니다.",
                 "주차장 이름, 주소, 빈자리, 현재 주차대수, 요금, 운영시간 등 부산 주차 데이터 질문에는 반드시 연결된 busan_parking MCP 도구를 사용해 실제 데이터를 조회하세요.",
@@ -76,14 +77,14 @@ export async function onRequestPost(context) {
         const status = String(result.payload.status || "").toLowerCase();
         if (status === "completed") {
             const answer = extractAnswer(result.payload);
-            if (answer) return json({ answer, model: config.model, status: "completed", toolServer: "busan_parking", storedByInteractionsApi: false }, 200, headers);
+            if (answer) return json({ answer, model: config.model, status: "completed", toolServer: "busan_parking", storedByInteractionsApi: true }, 200, headers);
         }
         if (status === "failed" || status === "cancelled" || status === "incomplete") {
             return interactionTerminalError(result.payload, headers);
         }
         if (!interactionId) {
             const answer = extractAnswer(result.payload);
-            if (answer) return json({ answer, model: config.model, status: "completed", toolServer: "busan_parking", storedByInteractionsApi: false }, 200, headers);
+            if (answer) return json({ answer, model: config.model, status: "completed", toolServer: "busan_parking", storedByInteractionsApi: true }, 200, headers);
             console.error("Gemini background interaction returned no ID", JSON.stringify({ status: status || "unknown" }));
             return json({ error: "Gemini가 백그라운드 작업 ID를 반환하지 않았습니다.", code: "GEMINI_MISSING_INTERACTION_ID", status: status || "unknown" }, 502, headers);
         }
@@ -140,7 +141,7 @@ export async function onRequestGet(context) {
             if (!answer) {
                 return json({ error: "Gemini 작업이 끝났지만 텍스트 답변이 없습니다.", code: "GEMINI_EMPTY_ANSWER" }, 502, headers);
             }
-            return json({ answer, model: config.model, status: "completed", toolServer: "busan_parking", storedByInteractionsApi: false }, 200, headers);
+            return json({ answer, model: config.model, status: "completed", toolServer: "busan_parking", storedByInteractionsApi: true }, 200, headers);
         }
         if (status === "in_progress" || status === "queued") {
             return json({ status: "in_progress", interactionId, model: config.model }, 202, headers);
