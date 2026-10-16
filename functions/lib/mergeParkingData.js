@@ -101,13 +101,22 @@ export function mergeParkingData({
         // API ③ 기본정보
         basicInfoMatched: basic?.matched === true,
         basicInfoMatchScore: basic?.matchScore ?? 0,
-        managementAgency: basic?.managementAgency || "",
-        address: basic?.address || "",
-        roadAddress: basic?.roadAddress || "",
-        lotAddress: basic?.lotAddress || "",
-        parkingType: basic?.parkingType || "",
-        latitude: basic?.latitude ?? null,
-        longitude: basic?.longitude ?? null,
+        basicInfoMatchReason: basic?.matchReason || null,
+        basicInfoFailureReason: basic?.failureReason || null,
+        basicInfoCandidateName: basic?.bestCandidateName || null,
+        basicInfoCandidateScore: basic?.bestCandidateScore ?? null,
+        managementAgency: firstText(basic?.managementAgency, facility?.managementAgency, facility?.guNm),
+        address: firstText(basic?.address, basic?.roadAddress, basic?.lotAddress, facility?.address, facility?.roadAddress, facility?.lotAddress, facility?.doroAddr, facility?.jibunAddr),
+        roadAddress: firstText(basic?.roadAddress, facility?.roadAddress, facility?.roadAddr),
+        lotAddress: firstText(basic?.lotAddress, facility?.lotAddress, facility?.lotAddr),
+        addressSource: basic?.matched && firstText(basic?.address, basic?.roadAddress, basic?.lotAddress)
+            ? "부산광역시 기본정보 매칭"
+            : firstText(facility?.address, facility?.roadAddress, facility?.lotAddress, facility?.doroAddr, facility?.jibunAddr)
+                ? "부산시설공단 목록"
+                : "none",
+        parkingType: firstText(basic?.parkingType, facility?.parkingType),
+        latitude: basic?.latitude ?? facility?.latitude ?? facility?.xCdnt ?? null,
+        longitude: basic?.longitude ?? facility?.longitude ?? facility?.yCdnt ?? null,
         baseTime: basic?.baseTime || "",
         baseFee: basic?.baseFee || "",
         addTime: basic?.addTime || "",
@@ -130,7 +139,8 @@ export function mergeParkingData({
             current: Number.isFinite(current),
             available: Number.isFinite(available),
             realtime: hasFacilityRealtime || hasCityRealtime,
-            basicInfo: basic?.matched === true
+            basicInfo: basic?.matched === true,
+            address: Boolean(firstText(basic?.address, basic?.roadAddress, basic?.lotAddress, facility?.address, facility?.roadAddress, facility?.lotAddress, facility?.doroAddr, facility?.jibunAddr))
         }
     };
 }

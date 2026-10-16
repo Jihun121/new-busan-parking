@@ -26,7 +26,8 @@ let memoryCacheAt = 0;
 export async function fetchFacilityMasterList({
     serviceKey,
     timeoutMs = DEFAULT_TIMEOUT_MS,
-    allowStale = true
+    allowStale = true,
+    forceRefresh = false
 }) {
     if (!serviceKey) {
         throw createError(
@@ -38,7 +39,7 @@ export async function fetchFacilityMasterList({
 
     const now = Date.now();
 
-    if (memoryCache && now - memoryCacheAt < MEMORY_TTL_MS) {
+    if (!forceRefresh && memoryCache && now - memoryCacheAt < MEMORY_TTL_MS) {
         return {
             ...memoryCache,
             source: "memory-cache",
@@ -50,7 +51,7 @@ export async function fetchFacilityMasterList({
 
     if (cached) {
         const age = now - Number(cached.fetchedAt || 0);
-        if (age <= EDGE_CACHE_TTL_MS) {
+        if (!forceRefresh && age <= EDGE_CACHE_TTL_MS) {
             setMemoryCache(cached);
             return {
                 ...cached,

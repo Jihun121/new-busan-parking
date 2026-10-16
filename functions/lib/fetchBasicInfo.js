@@ -1,3 +1,5 @@
+import { matchCityBasicInfo } from "./matchCityBasicInfo.js";
+
 const CITY_BASIC_INFO_URL =
     "https://apis.data.go.kr/6260000/BusanPblcPrkngInfoService/getPblcPrkngInfo";
 
@@ -5,20 +7,22 @@ const DEFAULT_TIMEOUT_MS = 5000;
 const DEFAULT_ROWS = 1000;
 const MEMORY_TTL_MS = 10 * 60 * 1000;
 const EDGE_CACHE_TTL_MS = 60 * 60 * 1000;
-const CACHE_NAME = "busan-parking-city-v12";
+const CACHE_NAME = "busan-parking-city-v15-2";
 const CACHE_KEY = new Request(
-    "https://busan-parking-cache.invalid/city-basic-v12",
+    "https://busan-parking-cache.invalid/city-basic-v15-2",
     { method: "GET" }
 );
 
 let basicCache = null;
+let basicCacheMeta = null;
 let basicCacheAt = 0;
 
 /** API ③ 부산광역시 공영주차장 기본정보 전체 목록 */
 export async function fetchCityBasicList({
     serviceKey,
     timeoutMs = DEFAULT_TIMEOUT_MS,
-    numOfRows = DEFAULT_ROWS
+    numOfRows = DEFAULT_ROWS,
+    forceRefresh = false
 }) {
     if (!serviceKey) {
         return {
@@ -31,20 +35,39 @@ export async function fetchCityBasicList({
 
     const now = Date.now();
 
-    if (basicCache && now - basicCacheAt < MEMORY_TTL_MS) {
-        return { ok: true, code: "MEMORY_CACHE", records: basicCache, stale: false };
+    if (!forceRefresh && basicCache && now - basicCacheAt < MEMORY_TTL_MS) {
+        return {
+            ok: true,
+            code: "MEMORY_CACHE",
+            records: basicCache,
+            totalCount: basicCacheMeta?.totalCount ?? basicCache.length,
+            pagesFetched: basicCacheMeta?.pagesFetched ?? 1,
+            fetchedAt: basicCacheMeta?.fetchedAt ?? basicCacheAt,
+            pageErrors: basicCacheMeta?.pageErrors || [],
+            stale: false
+        };
     }
 
     const edgeCached = await readEdgeCache();
     if (edgeCached) {
         const age = now - Number(edgeCached.fetchedAt || 0);
-        if (age <= EDGE_CACHE_TTL_MS) {
+        if (!forceRefresh && age <= EDGE_CACHE_TTL_MS) {
             basicCache = edgeCached.records;
+            basicCacheMeta = {
+                totalCount: edgeCached.totalCount ?? edgeCached.records.length,
+                pagesFetched: edgeCached.pagesFetched ?? 1,
+                fetchedAt: edgeCached.fetchedAt,
+                pageErrors: edgeCached.pageErrors || []
+            };
             basicCacheAt = Date.now();
             return {
                 ok: true,
                 code: "EDGE_CACHE",
                 records: basicCache,
+                totalCount: edgeCached.totalCount ?? basicCache.length,
+                pagesFetched: edgeCached.pagesFetched ?? 1,
+                fetchedAt: edgeCached.fetchedAt,
+                pageErrors: edgeCached.pageErrors || [],
                 stale: age > MEMORY_TTL_MS
             };
         }
@@ -79,24 +102,72 @@ export async function fetchCityBasicList({
             );
         }
 
-        const records = parsed.items.map(toBasicRecord).filter(Boolean);
-        const payload = { records, fetchedAt: Date.now() };
+        // The API normally fits in one large page. If totalCount says otherwise,
+        // read up to four additional pages rather than silently missing address candidates.
+        const rawItems = [...parsed.items];
+        const pageErrors = [];
+        let pagesFetched = 1;
+        const reportedTotal = Number.isFinite(parsed.totalCount) ? parsed.totalCount : rawItems.length;
+        const expectedPages = Math.min(5, Math.max(1, Math.ceil(reportedTotal / numOfRows)));
+
+        for (let pageNo = 2; pageNo <= expectedPages; pageNo += 1) {
+            try {
+                const pageUrl = new URL(CITY_BASIC_INFO_URL);
+                pageUrl.searchParams.set("serviceKey", serviceKey);
+                pageUrl.searchParams.set("pageNo", String(pageNo));
+                pageUrl.searchParams.set("numOfRows", String(numOfRows));
+                pageUrl.searchParams.set("resultType", "json");
+                const pageResponse = await requestOnce(pageUrl.toString(), timeoutMs);
+                if (!pageResponse.response.ok) {
+                    pageErrors.push({ pageNo, code: "CITY_BASIC_HTTP_ERROR", status: pageResponse.response.status });
+                    continue;
+                }
+                const pageParsed = parsePayload(pageResponse.text, pageResponse.response.headers.get("content-type"));
+                if (pageParsed.resultCode && pageParsed.resultCode !== "00") {
+                    pageErrors.push({ pageNo, code: "CITY_BASIC_API_ERROR", upstreamCode: pageParsed.resultCode });
+                    continue;
+                }
+                rawItems.push(...pageParsed.items);
+                pagesFetched += 1;
+            } catch (pageError) {
+                pageErrors.push({ pageNo, code: pageError?.code || "CITY_BASIC_PAGE_ERROR", message: pageError?.message || String(pageError) });
+            }
+        }
+
+        const records = dedupeCityRecords(rawItems.map(toBasicRecord).filter(Boolean));
+        const payload = { records, totalCount: reportedTotal, pagesFetched, pageErrors, fetchedAt: Date.now() };
 
         basicCache = records;
+        basicCacheMeta = {
+            totalCount: payload.totalCount,
+            pagesFetched: payload.pagesFetched,
+            pageErrors: payload.pageErrors,
+            fetchedAt: payload.fetchedAt
+        };
         basicCacheAt = Date.now();
         await writeEdgeCache(payload);
 
-        return { ok: true, code: "UPSTREAM", records, stale: false };
+        return { ok: true, code: "UPSTREAM", ...payload, stale: false };
     } catch (error) {
         if (edgeCached) {
             const age = now - Number(edgeCached.fetchedAt || 0);
             if (age <= 24 * 60 * 60 * 1000) {
                 basicCache = edgeCached.records;
+                basicCacheMeta = {
+                    totalCount: edgeCached.totalCount ?? edgeCached.records.length,
+                    pagesFetched: edgeCached.pagesFetched ?? 1,
+                    fetchedAt: edgeCached.fetchedAt,
+                    pageErrors: edgeCached.pageErrors || []
+                };
                 basicCacheAt = Date.now();
                 return {
                     ok: true,
                     code: "STALE_EDGE_CACHE",
                     records: edgeCached.records,
+                    totalCount: edgeCached.totalCount ?? edgeCached.records.length,
+                    pagesFetched: edgeCached.pagesFetched ?? 1,
+                    fetchedAt: edgeCached.fetchedAt,
+                    pageErrors: edgeCached.pageErrors || [],
                     stale: true,
                     error: error?.message || "부산광역시 기본정보 API가 일시적으로 응답하지 않았습니다."
                 };
@@ -117,108 +188,70 @@ export async function fetchBasicInfo({
     serviceKey,
     parkingItems = [],
     timeoutMs = DEFAULT_TIMEOUT_MS,
-    numOfRows = DEFAULT_ROWS
+    numOfRows = DEFAULT_ROWS,
+    forceRefresh = false
 }) {
-    const result = await fetchCityBasicList({ serviceKey, timeoutMs, numOfRows });
+    const result = await fetchCityBasicList({ serviceKey, timeoutMs, numOfRows, forceRefresh });
     return {
         ...result,
-        records: parkingItems.map(item => matchBasicInfo(item, result.records || []))
+        records: parkingItems.map(item => matchCityBasicInfo(item, result.records || []))
     };
 }
 
 function toBasicRecord(item) {
     if (!item) return null;
 
-    return {
-        parknm: firstText(item.pkNam, item.parknm, item.parkNm, item.parkName),
-        managementAgency: firstText(item.guNm),
-        roadAddress: firstText(item.jibunAddr),
-        lotAddress: firstText(item.doroAddr),
-        address: firstText(item.jibunAddr, item.doroAddr),
-        parkingType: firstText(item.pkFm),
-        totalParkingCount: toNumberOrNull(item.pkCnt),
-        currentParkingCount: toNumberOrNull(item.parkingcnt, item.currparkcnt, item.currCnt),
-        availableParkingCount: toNumberOrNull(item.currava, item.currAvaCnt),
-        latitude: toNumberOrNull(item.xCdnt),
-        longitude: toNumberOrNull(item.yCdnt),
-        baseTime: firstText(item.pkBascTime),
-        baseFee: firstText(item.tenMin),
-        addTime: firstText(item.pkAddTime),
-        addFee: firstText(item.feeAdd),
-        dailyPassFee: firstText(item.ftDay),
-        monthlyPassFee: firstText(item.ftMon),
-        operationStart: firstText(item.svcSrtTe),
-        operationEnd: firstText(item.svcEndTe),
-        notes: firstText(item.spclNote),
-        lastupdatetime: firstText(item.lastupdatetime, item.lastUpdateTime, item.lastUpdate, item.updDt, item.updateTime),
-        cityRecord: item
-    };
-}
-
-function matchBasicInfo(parking, cityItems) {
-    const targetName = normalizeText(firstText(
-        parking?.parknm,
-        parking?.parkName,
-        parking?.parkNm,
-        parking?.pkNam
-    ));
-
-    const targetAddress = normalizeAddress(firstText(
-        parking?.address,
-        parking?.roadAddress,
-        parking?.doroAddr,
-        parking?.jibunAddr
-    ));
-
-    if (!targetName && !targetAddress) return null;
-
-    let best = null;
-    let bestScore = 0;
-
-    for (const item of cityItems) {
-        const name = normalizeText(item?.parknm);
-        if (!name) continue;
-
-        const address = normalizeAddress(item?.address);
-        let score = 0;
-
-        if (targetName && name === targetName) score += 100;
-        else if (targetName && (name.includes(targetName) || targetName.includes(name))) score += 60;
-
-        if (targetAddress && address) {
-            if (address === targetAddress) score += 50;
-            else if (address.includes(targetAddress) || targetAddress.includes(address)) score += 25;
-            else score += addressOverlapScore(targetAddress, address);
-        }
-
-        if (score > bestScore) {
-            bestScore = score;
-            best = item;
-        }
-    }
-
-    if (!best || bestScore < 60) {
-        return {
-            matched: false,
-            matchScore: bestScore,
-            source: "부산광역시_공영주차장 정보 조회"
-        };
-    }
+    // 공공데이터포털 명세상 레거시 필드 이름이 일반적인 의미와 반대로 정의되어 있습니다:
+    // jibunAddr = 소재지도로명주소, doroAddr = 소재지지번주소.
+    // 화면 필드 roadAddress / lotAddress는 명세의 국문 설명에 맞춰 정규화합니다.
+    const roadAddress = firstText(item.jibunAddr, item.roadAddress, item.roadAddr, item.rdnmadr);
+    const lotAddress = firstText(item.doroAddr, item.lotAddress, item.lotAddr, item.lnmadr);
+    const address = firstText(roadAddress, lotAddress, item.address);
 
     return {
-        ...best,
-        matched: true,
-        matchScore: bestScore,
-        source: "부산광역시_공영주차장 정보 조회"
+        parknm: firstText(item.pkNam, item.parknm, item.parkNm, item.parkName, item.name),
+        managementNumber: firstText(item.mgntNum, item.managementNumber, item.managementNo, item.prkplceNo),
+        managementAgency: firstText(item.guNm, item.managementAgency),
+        roadAddress,
+        lotAddress,
+        address,
+        parkingType: firstText(item.pkFm, item.parkingType, item.prkplceType),
+        totalParkingCount: toNumberOrNull(item.pkCnt, item.totalParkingCount, item.prkcmprt),
+        currentParkingCount: toNumberOrNull(item.parkingcnt, item.currparkcnt, item.currCnt, item.currentParkingCount),
+        availableParkingCount: toNumberOrNull(item.currava, item.currAvaCnt, item.availableParkingCount),
+        latitude: toNumberOrNull(item.xCdnt, item.latitude, item.lat),
+        longitude: toNumberOrNull(item.yCdnt, item.longitude, item.lon, item.lng),
+        baseTime: firstText(item.pkBascTime, item.baseTime),
+        baseFee: firstText(item.tenMin, item.baseFee),
+        addTime: firstText(item.pkAddTime, item.addTime),
+        addFee: firstText(item.feeAdd, item.addFee),
+        dailyPassFee: firstText(item.ftDay, item.dailyPassFee),
+        monthlyPassFee: firstText(item.ftMon, item.monthlyPassFee),
+        operationStart: firstText(item.svcSrtTe, item.operationStart),
+        operationEnd: firstText(item.svcEndTe, item.operationEnd),
+        notes: firstText(item.spclNote, item.notes),
+        lastupdatetime: firstText(item.lastupdatetime, item.lastUpdateTime, item.lastUpdate, item.updDt, item.updateTime, item.fnlDt)
     };
 }
+function dedupeCityRecords(records) {
+    const seen = new Set();
+    const output = [];
+    for (const record of records) {
+        const key = String(record.managementNumber || "").trim() ||
+            `${normalizeRecordName(record.parknm)}|${normalizeRecordAddress(record.address)}`;
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        output.push(record);
+    }
+    return output;
+}
 
-function addressOverlapScore(a, b) {
-    const aParts = a.split(" ").filter(part => part.length >= 2);
-    const bSet = new Set(b.split(" ").filter(part => part.length >= 2));
-    let hits = 0;
-    for (const part of aParts) if (bSet.has(part)) hits += 1;
-    return Math.min(20, hits * 10);
+function normalizeRecordName(value) {
+    return String(value || "").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+}
+
+function normalizeRecordAddress(value) {
+    return String(value || "").toLowerCase().replace(/부산광역시|부산시/g, "").replace(/[^\p{L}\p{N}]/gu, "");
 }
 
 async function readEdgeCache() {
@@ -305,8 +338,14 @@ function parseJsonPayload(data) {
     return {
         items: items.filter(Boolean),
         resultCode: data?.response?.header?.resultCode ?? data?.resultCode ?? "00",
-        resultMsg: data?.response?.header?.resultMsg ?? data?.resultMsg ?? "OK"
+        resultMsg: data?.response?.header?.resultMsg ?? data?.resultMsg ?? "OK",
+        totalCount: safeCount(body?.totalCount ?? data?.totalCount, items.length)
     };
+}
+
+function safeCount(value, fallback) {
+    const n = Number(value);
+    return value !== null && value !== undefined && value !== "" && Number.isFinite(n) && n >= 0 ? n : fallback;
 }
 
 function parseXmlPayload(xml) {
@@ -322,7 +361,8 @@ function parseXmlPayload(xml) {
     return {
         items,
         resultCode: firstXmlValue(xml, "resultCode") || "00",
-        resultMsg: firstXmlValue(xml, "resultMsg") || "OK"
+        resultMsg: firstXmlValue(xml, "resultMsg") || "OK",
+        totalCount: safeCount(firstXmlValue(xml, "totalCount"), items.length)
     };
 }
 
@@ -339,23 +379,6 @@ function decodeXmlEntities(value) {
         .replace(/&quot;/g, '"')
         .replace(/&apos;/g, "'")
         .replace(/&#39;/g, "'");
-}
-
-function normalizeText(value) {
-    return String(value || "")
-        .trim()
-        .toLowerCase()
-        .replace(/\s+/g, "")
-        .replace(/[()（）\-_/]/g, "");
-}
-
-function normalizeAddress(value) {
-    return String(value || "")
-        .trim()
-        .toLowerCase()
-        .replace(/[(),]/g, " ")
-        .replace(/\s+/g, " ")
-        .trim();
 }
 
 function firstText(...values) {

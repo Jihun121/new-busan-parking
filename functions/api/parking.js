@@ -2,6 +2,7 @@ import { fetchFacilityMasterList } from "../lib/fetchParkingList.js";
 import { fetchRealtime } from "../lib/fetchRealtime.js";
 import { fetchCityBasicList } from "../lib/fetchBasicInfo.js";
 import { normalizeName } from "../lib/normalizeName.js";
+import { matchCityBasicInfo, buildAddressMatchDiagnostics } from "../lib/matchCityBasicInfo.js";
 import { mergeParkingData } from "../lib/mergeParkingData.js";
 
 const DEFAULT_ROWS = 10;
@@ -121,16 +122,23 @@ export async function onRequestGet(context) {
         const start = (safePage - 1) * numOfRows;
         const pageItems = searchedItems.slice(start, start + numOfRows);
 
-        // API ③ 기본정보는 현재 화면에 필요한 항목만 매칭합니다.
+        // Normal requests only match the visible page to avoid O(all-facility × city-records)
+        // work on every page turn. The dedicated /api/parking-diagnostics route computes
+        // whole-list statistics when the developer explicitly requests diagnostics.
         const basicRecords = pageItems.map(item => {
-            const matched = matchBasicInline(item, cityResult?.records || []);
-            if (!matched) return null;
+            const matched = matchCityBasicInfo(item, cityResult?.records || []);
             return {
                 ...matched,
                 stale: Boolean(cityResult?.stale),
                 sourceStatus: cityResult?.stale ? "city-cache" : "city-live"
             };
         });
+        const addressStats = buildAddressMatchDiagnostics(
+            pageItems,
+            cityResult?.records || [],
+            basicRecords,
+            "current-page"
+        );
 
         // API ②는 현재 페이지에 보이는 주차장만 조회합니다.
         // 기존처럼 전체 50개를 매번 조회하지 않아서 호출량/대기시간을 크게 줄입니다.
@@ -216,7 +224,23 @@ export async function onRequestGet(context) {
                     source: "부산광역시_공영주차장 정보 조회",
                     cache: cityResult?.code || null,
                     status: cityResult?.ok ? "ok" : "optional-failed",
-                    records: cityResult?.records?.length || 0
+                    records: cityResult?.records?.length || 0,
+                    totalCountReported: cityResult?.totalCount ?? cityResult?.records?.length ?? 0,
+                    pagesFetched: cityResult?.pagesFetched ?? 1
+                },
+                addressMatching: {
+                    scope: addressStats.scope,
+                    cityMatchRatePercent: addressStats.cityMatchRatePercent,
+                    cityAddressJoinRatePercent: addressStats.cityAddressJoinRatePercent,
+                    finalAddressCoveragePercent: addressStats.finalAddressCoveragePercent,
+                    facilityRecords: addressStats.facilityRecords,
+                    cityRecordsLoaded: addressStats.cityRecordsLoaded,
+                    cityMatchedRecords: addressStats.cityMatchedRecords,
+                    unmatchedRecords: addressStats.unmatchedRecords,
+                    addressAvailableAfterMerge: addressStats.addressAvailableAfterMerge,
+                    addressMissingAfterMerge: addressStats.addressMissingAfterMerge,
+                    matchMethods: addressStats.matchMethods,
+                    failureReasons: addressStats.failureReasons
                 }
             }
         });
@@ -262,48 +286,6 @@ function normalizeFacilityItem(item) {
         parknm: firstText(item?.parknm, item?.parkNm, item?.parkName, item?.pkNam),
         address: firstText(item?.address, item?.roadAddress, item?.doroAddr, item?.jibunAddr)
     };
-}
-
-function matchBasicInline(parking, cityItems) {
-    const targetName = normalizeName(firstText(parking?.parknm, parking?.parkName, parking?.parkNm));
-    const targetAddress = normalizeAddress(firstText(parking?.address, parking?.roadAddress, parking?.jibunAddr));
-
-    if (!targetName && !targetAddress) return null;
-
-    let best = null;
-    let bestScore = 0;
-
-    for (const item of cityItems) {
-        const name = normalizeName(item?.parknm);
-        if (!name) continue;
-        const address = normalizeAddress(item?.address);
-
-        let score = 0;
-        if (targetName && name === targetName) score += 100;
-        else if (targetName && (name.includes(targetName) || targetName.includes(name))) score += 60;
-
-        if (targetAddress && address) {
-            if (targetAddress === address) score += 50;
-            else if (targetAddress.includes(address) || address.includes(targetAddress)) score += 25;
-        }
-
-        if (score > bestScore) {
-            bestScore = score;
-            best = item;
-        }
-    }
-
-    if (!best || bestScore < 60) return null;
-    return { ...best, matched: true, matchScore: bestScore };
-}
-
-function normalizeAddress(value) {
-    return String(value || "")
-        .trim()
-        .toLowerCase()
-        .replace(/[(),]/g, " ")
-        .replace(/\s+/g, " ")
-        .trim();
 }
 
 async function prefetchRealtimeItems({ serviceKey, items, timeoutMs, concurrency }) {
