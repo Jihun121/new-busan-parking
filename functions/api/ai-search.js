@@ -111,21 +111,46 @@ export async function onRequestPost(context) {
 
         if (!upstream.ok) {
             const providerMessage = getProviderMessage(payload);
-            console.error("Gemini API error:", upstream.status, payload?.error?.status || "unknown");
+            const providerStatus = String(payload?.error?.status || payload?.status || "").slice(0, 80);
+            const safeDetail = sanitizeProviderMessage(providerMessage);
+            // Log only upstream diagnostics; never log the API key or user query.
+            console.error("Gemini API upstream error", JSON.stringify({
+                httpStatus: upstream.status,
+                providerStatus: providerStatus || "unknown",
+                detail: safeDetail || "(no provider message)"
+            }));
 
+            const diagnostic = {
+                upstreamStatus: upstream.status,
+                providerStatus,
+                ...(safeDetail ? { detail: safeDetail } : {})
+            };
             if (upstream.status === 429) {
                 return json({
-                    error: "Gemini 무료 사용 한도 또는 요청 속도 제한에 도달했습니다. 잠시 기다리거나 AI Studio에서 한도를 확인해 주세요.",
-                    code: "GEMINI_RATE_LIMIT"
+                    error: "Gemini 무료 사용 한도 또는 요청 속도 제한에 도달했습니다. AI Studio에서 현재 한도와 사용량을 확인해 주세요.",
+                    code: "GEMINI_RATE_LIMIT",
+                    ...diagnostic
                 }, 429, headers);
             }
             if (upstream.status === 401 || upstream.status === 403) {
-                return json({ error: "Gemini API 키가 유효하지 않거나 API 접근 권한이 없습니다. Secret과 Google AI Studio 프로젝트를 확인해 주세요.", code: "GEMINI_AUTH_ERROR" }, 502, headers);
+                return json({
+                    error: "Gemini API 키가 유효하지 않거나 API 접근 권한이 없습니다. Cloudflare Secret과 Google AI Studio 프로젝트를 확인해 주세요.",
+                    code: "GEMINI_AUTH_ERROR",
+                    ...diagnostic
+                }, 502, headers);
             }
             if (upstream.status === 400) {
-                return json({ error: "Gemini 요청 또는 MCP 설정을 거부했습니다. 모델과 MCP 서버 주소를 확인해 주세요.", code: "GEMINI_BAD_REQUEST", detail: providerMessage }, 502, headers);
+                return json({
+                    error: "Gemini가 요청을 거부했습니다. 상세 오류를 확인해 주세요.",
+                    code: "GEMINI_BAD_REQUEST",
+                    ...diagnostic
+                }, 502, headers);
             }
-            return json({ error: "Gemini API에서 오류가 발생했습니다.", code: "GEMINI_UPSTREAM_ERROR", detail: providerMessage }, 502, headers);
+            return json({
+                error: "Gemini API에서 오류가 발생했습니다. 아래 상세 오류를 확인해 주세요.",
+                code: "GEMINI_UPSTREAM_ERROR",
+                ...diagnostic
+            }, 502, headers);
         }
 
         if (!payload) {
@@ -190,7 +215,16 @@ function collectText(value) {
 
 function getProviderMessage(payload) {
     const message = payload?.error?.message || payload?.message;
-    return typeof message === "string" ? message.slice(0, 400) : "";
+    return typeof message === "string" ? message.slice(0, 800) : "";
+}
+
+function sanitizeProviderMessage(message) {
+    if (typeof message !== "string") return "";
+    return message
+        .replace(/AIza[0-9A-Za-z_-]{20,}/g, "[redacted-api-key]")
+        .replace(/Bearer\s+\S+/gi, "Bearer [redacted]")
+        .replace(/[\r\n\t]+/g, " ")
+        .slice(0, 400);
 }
 
 function json(data, status = 200, headers = {}) {

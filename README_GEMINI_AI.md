@@ -80,3 +80,10 @@ Gemini가 원격 MCP 서버를 호출하므로, AI 검색 한 번이 원본 MCP/
 ## 사용자 화면
 
 AI 답변은 안전하게 `textContent`로 출력합니다. 응답 HTML은 실행하지 않습니다. API 데이터가 없거나 오래된 경우 Gemini가 추측하지 않도록 시스템 지침을 적용했습니다.
+
+
+## GEMINI_UPSTREAM_ERROR 진단 (v14.1)
+
+오류 화면에는 이제 Gemini HTTP 상태, 공급자 상태와 제한된 상세 메시지가 표시됩니다. 예를 들어 `Gemini HTTP 429`는 사용량/속도 한도, `Gemini HTTP 400`은 요청·모델·MCP 설정 오류, `Gemini HTTP 500/503`은 공급자 측 오류일 가능성이 높습니다.
+
+Cloudflare 대시보드에서도 Pages 프로젝트의 Functions 로그에서 `Gemini API upstream error`를 찾아 `httpStatus`, `providerStatus`, `detail`을 확인할 수 있습니다. 로그에는 API 키나 사용자의 질문을 기록하지 않도록 했습니다. 상세 오류 메시지에 민감한 값이 포함될 수 있으니 공유하기 전에 키나 개인 정보를 제거하세요.

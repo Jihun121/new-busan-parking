@@ -62,8 +62,12 @@
 
             if (!response.ok) {
                 const message = payload?.error || `AI 검색 요청 실패 (HTTP ${response.status})`;
-                const detail = payload?.code ? `\n오류 코드: ${payload.code}` : "";
-                throw new Error(`${message}${detail}`);
+                const parts = [message];
+                if (payload?.upstreamStatus) parts.push(`Gemini HTTP ${payload.upstreamStatus}`);
+                if (payload?.providerStatus) parts.push(`상태 ${payload.providerStatus}`);
+                if (payload?.code) parts.push(`오류 코드 ${payload.code}`);
+                if (payload?.detail) parts.push(`상세: ${payload.detail}`);
+                throw new Error(parts.join(" · "));
             }
 
             if (!payload?.answer || typeof payload.answer !== "string") {
