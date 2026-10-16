@@ -87,3 +87,12 @@ AI 답변은 안전하게 `textContent`로 출력합니다. 응답 HTML은 실�
 오류 화면에는 이제 Gemini HTTP 상태, 공급자 상태와 제한된 상세 메시지가 표시됩니다. 예를 들어 `Gemini HTTP 429`는 사용량/속도 한도, `Gemini HTTP 400`은 요청·모델·MCP 설정 오류, `Gemini HTTP 500/503`은 공급자 측 오류일 가능성이 높습니다.
 
 Cloudflare 대시보드에서도 Pages 프로젝트의 Functions 로그에서 `Gemini API upstream error`를 찾아 `httpStatus`, `providerStatus`, `detail`을 확인할 수 있습니다. 로그에는 API 키나 사용자의 질문을 기록하지 않도록 했습니다. 상세 오류 메시지에 민감한 값이 포함될 수 있으니 공유하기 전에 키나 개인 정보를 제거하세요.
+
+
+## GEMINI_CONNECTION_FAILED 진단 (v14.2)
+
+- 이 오류는 Gemini API의 HTTP 오류 응답이 아니라, Pages Function에서 Gemini API로 요청하는 `fetch()` 단계에서 연결 예외가 발생한 경우입니다.
+- v14.2는 일시적인 네트워크 예외에 대해 전체 시간 제한 안에서 한 번 재시도합니다.
+- 재시도 후에도 실패하면 화면에 연결 진단(`name`, `message`, 가능한 경우 `causeCode`/`causeMessage`)을 표시합니다. 이 정보에는 API 키를 포함하지 않도록 마스킹 처리를 합니다.
+- 계속 실패하면 Cloudflare Pages의 Functions 로그에서 `Gemini upstream fetch failed`를 찾아 `causeCode` 및 메시지를 확인합니다. 실제 Gemini HTTP 오류(예: 400/401/429)는 `GEMINI_CONNECTION_FAILED`가 아니라 별도의 upstream 오류 코드로 반환됩니다.
+- 확인 항목: `GEMINI_API_KEY`가 Pages의 Production Secret인지, 배포가 완료됐는지, `/api/ai-search`가 최신 버전인지 확인합니다. MCP 연결 자체 문제는 일반적으로 Gemini가 HTTP 오류 응답을 반환하므로 이 오류 코드와 구분됩니다.

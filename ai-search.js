@@ -67,6 +67,18 @@
                 if (payload?.providerStatus) parts.push(`상태 ${payload.providerStatus}`);
                 if (payload?.code) parts.push(`오류 코드 ${payload.code}`);
                 if (payload?.detail) parts.push(`상세: ${payload.detail}`);
+                if (payload?.attempts) parts.push(`시도 횟수 ${payload.attempts}`);
+                if (payload?.diagnostic && typeof payload.diagnostic === "object") {
+                    const diagnostic = payload.diagnostic;
+                    const details = [
+                        diagnostic.name,
+                        diagnostic.message,
+                        diagnostic.causeCode ? `causeCode=${diagnostic.causeCode}` : "",
+                        diagnostic.causeName ? `causeName=${diagnostic.causeName}` : "",
+                        diagnostic.causeMessage ? `cause=${diagnostic.causeMessage}` : ""
+                    ].filter(Boolean);
+                    if (details.length) parts.push(`연결 진단: ${details.join(" / ")}`);
+                }
                 throw new Error(parts.join(" · "));
             }
 
