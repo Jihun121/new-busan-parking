@@ -37,6 +37,9 @@ export async function onRequestGet(context) {
             MAX_ROWS
         );
         const keyword = (requestUrl.searchParams.get("keyword") || "").trim();
+        // MCP 상세 조회 및 특정 주차장 직접 조회를 위한 선택적 코드 필터.
+        // 이 파라미터가 없으면 기존 웹사이트 동작은 변하지 않습니다.
+        const parkingCode = (requestUrl.searchParams.get("parkgcd") || "").trim();
         const forceRealtime = requestUrl.searchParams.get("refresh") === "1";
 
         // API ①과 API ③을 동시에 준비합니다.
@@ -105,9 +108,12 @@ export async function onRequestGet(context) {
         }
 
         // 검색은 API를 다시 호출하지 않고 캐시된 API ① 목록에서 수행합니다.
-        const searchedItems = keyword
-            ? facilityItems.filter(item => matchesKeyword(item, keyword))
-            : facilityItems;
+        const searchedItems = facilityItems.filter(item => {
+            const keywordMatches = !keyword || matchesKeyword(item, keyword);
+            const itemCode = firstText(item?.parkgcd, item?.parkGcd, item?.parkGCd, item?.pParkGCd);
+            const codeMatches = !parkingCode || normalizeName(itemCode) === normalizeName(parkingCode);
+            return keywordMatches && codeMatches;
+        });
 
         const totalCount = searchedItems.length;
         const totalPages = Math.max(1, Math.ceil(totalCount / numOfRows));
@@ -186,6 +192,7 @@ export async function onRequestGet(context) {
             totalCount,
             totalPages,
             keyword,
+            parkingCode: parkingCode || null,
             items,
             meta: {
                 elapsedMs: Date.now() - startedAt,

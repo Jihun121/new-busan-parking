@@ -1,0 +1,2 @@
+# Replace with the real production Pages API endpoint.
+PARKING_API_URL="https://YOUR-PAGES-PROJECT.pages.dev/api/parking"

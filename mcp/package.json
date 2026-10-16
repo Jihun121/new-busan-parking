@@ -1,0 +1,20 @@
+{
+  "name": "busan-parking-mcp",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Remote MCP server exposing read-only tools for the Busan public parking website API.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "check": "node --check server.js && node --check tools/searchParking.js && node --check tools/findAvailableParking.js && node --check tools/getParkingDetail.js && node --check lib/parkingApi.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "2.3.1",
+    "agents": "0.28.1",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
