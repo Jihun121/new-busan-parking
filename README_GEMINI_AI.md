@@ -96,3 +96,16 @@ Cloudflare 대시보드에서도 Pages 프로젝트의 Functions 로그에서 `G
 - 재시도 후에도 실패하면 화면에 연결 진단(`name`, `message`, 가능한 경우 `causeCode`/`causeMessage`)을 표시합니다. 이 정보에는 API 키를 포함하지 않도록 마스킹 처리를 합니다.
 - 계속 실패하면 Cloudflare Pages의 Functions 로그에서 `Gemini upstream fetch failed`를 찾아 `causeCode` 및 메시지를 확인합니다. 실제 Gemini HTTP 오류(예: 400/401/429)는 `GEMINI_CONNECTION_FAILED`가 아니라 별도의 upstream 오류 코드로 반환됩니다.
 - 확인 항목: `GEMINI_API_KEY`가 Pages의 Production Secret인지, 배포가 완료됐는지, `/api/ai-search`가 최신 버전인지 확인합니다. MCP 연결 자체 문제는 일반적으로 Gemini가 HTTP 오류 응답을 반환하므로 이 오류 코드와 구분됩니다.
+
+
+## v14.3 — 백그라운드 상호작용으로 AI 타임아웃 완화
+
+기존 동기 요청은 Gemini가 원격 MCP 도구를 실행하고 답변까지 생성하는 전체 과정을 하나의 HTTP 요청으로 기다렸습니다. 이 과정이 55초를 넘으면 `GEMINI_TIMEOUT`이 발생할 수 있었습니다.
+
+v14.3에서는 Google Gemini Interactions API의 `background: true`를 사용합니다. Pages Function은 작업을 시작하고 interaction ID를 반환하며, `ai-search.js`가 `/api/ai-search?interactionId=...`를 주기적으로 조회합니다. 상태 확인은 별도 짧은 HTTP 요청이므로 긴 모델/MCP 작업 하나가 브라우저 요청을 계속 붙잡지 않습니다. UI는 최대 3분 동안 결과를 기다리고 진행 상태를 표시합니다.
+
+`store: false` 설정을 유지합니다. Google 공식 문서에 따르면 background interaction은 결과 조회를 위해 최대 24시간 보관됩니다. 이 동작은 요청/응답 원문을 별도 애플리케이션 DB에 저장한다는 뜻은 아니며, 무료 등급 데이터 사용 정책은 별도로 적용됩니다.
+
+공식 참고: https://ai.google.dev/gemini-api/docs/background-execution
+
+배포 시 기존 `GEMINI_API_KEY` Secret과 `BUSAN_PARKING_MCP_URL` 환경변수를 그대로 사용합니다. MCP Worker는 변경되지 않았으므로 재배포할 필요가 없습니다. Pages 파일을 업데이트하고 Pages를 다시 배포하세요. 기존 PWA 아이콘 파일은 보존하세요.

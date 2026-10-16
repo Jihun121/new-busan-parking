@@ -16,3 +16,8 @@
 ## Gemini AI 검색 통합
 
 웹사이트 AI 검색은 `functions/api/ai-search.js`에서 Gemini Interactions API를 호출하고, 배포된 원격 MCP 서버의 `/mcp` 엔드포인트를 연결합니다. 환경변수 설정과 무료 사용 정책은 `README_GEMINI_AI.md`를 확인하세요.
+
+
+## Gemini UI 연동 (v14.3)
+
+웹사이트의 `/api/ai-search`는 Gemini Interactions API에 `background: true`로 작업을 생성하고 ID를 반환합니다. 브라우저는 해당 ID를 사용해 GET `/api/ai-search?interactionId=<id>`로 완료 상태를 확인합니다. 이 변경은 Pages 측 처리 방식이므로 기존 MCP Worker 코드는 변경하지 않습니다.
