@@ -10,7 +10,7 @@
     if (!form || !input || !button || !status || !answerPanel || !answerText) return;
 
     const CREATE_FETCH_TIMEOUT_MS = 18_000;
-    const POLL_FETCH_TIMEOUT_MS = 18_000;
+    const POLL_FETCH_TIMEOUT_MS = 45_000;
     const MAX_TOTAL_WAIT_MS = 180_000;
     const POLL_INTERVAL_MS = 2_500;
     let isSearching = false;
@@ -82,7 +82,7 @@
 
         while (Date.now() - startedAt < MAX_TOTAL_WAIT_MS) {
             const elapsedSeconds = Math.floor((Date.now() - startedAt) / 1000);
-            setStatus(`Gemini가 MCP 도구로 주차장 데이터를 조회하고 있습니다… ${elapsedSeconds}초`, "loading");
+            setStatus(`Gemini가 주차장 도구를 실행하고 답변을 준비하고 있습니다… ${elapsedSeconds}초`, "loading");
             await delay(POLL_INTERVAL_MS);
 
             let response;
@@ -122,9 +122,6 @@
             consecutiveTransientErrors = 0;
             if (payload?.answer && typeof payload.answer === "string") {
                 return { answer: payload.answer, model: payload.model || model };
-            }
-            if (payload?.status === "requires_action") {
-                throw new Error("Gemini가 추가 동작을 기다리고 있습니다. 원격 MCP 서버 설정을 확인해 주세요. 오류 코드 GEMINI_REQUIRES_ACTION");
             }
             makeHttpError(response, payload || {});
         }

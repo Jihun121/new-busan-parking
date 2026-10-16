@@ -12,7 +12,7 @@
 1. 사용자가 AI 검색창에 자연어 질문을 입력합니다.
 2. 브라우저는 같은 사이트의 `POST /api/ai-search`로 질문만 보냅니다.
 3. Pages Function은 `GEMINI_API_KEY` Secret을 사용해 Gemini Interactions API를 호출합니다.
-4. Gemini가 원격 MCP 도구를 호출해 기존 `/api/parking`에서 주차장 정보를 조회합니다.
+4. Gemini가 함수 호출을 요청하면 Pages Function이 기존 원격 MCP Worker의 도구를 실행하고, 결과를 Gemini에 돌려줍니다. MCP 도구는 기존 `/api/parking`을 통해 주차장 정보를 조회합니다.
 5. 한국어 답변을 브라우저에 표시합니다.
 
 브라우저로 Gemini API 키를 전송하지 않습니다. 백그라운드 실행 결과를 interaction ID로 조회하기 위해 요청은 `store: true`로 전송됩니다. 따라서 Gemini Interactions API가 상호작용을 저장할 수 있습니다. **민감한 개인정보나 비밀을 AI 검색창에 입력하지 마세요.** 데이터 처리 및 보관 기간은 Google의 현재 정책, 모델, 프로젝트 및 요금제에 따라 달라질 수 있으므로 AI Studio와 공식 문서에서 확인하세요.
@@ -118,3 +118,19 @@ v14.3에서 `background: true`와 `store: false`를 함께 보냈지만, API가 
 **개인정보 관련 변경:** Gemini Interactions API가 상호작용을 저장할 수 있습니다. 질문과 답변에는 개인 식별 정보, 연락처, API 키 또는 비밀을 입력하지 마세요. 보관 기간과 무료 등급 데이터 처리 조건은 Google 공식 문서 및 AI Studio의 현재 프로젝트 설정을 확인하세요.
 
 공식 문서: https://ai.google.dev/gemini-api/docs/background-execution · https://ai.google.dev/gemini-api/docs/interactions-overview
+
+
+## v14.5 — Gemini function-call ↔ MCP 도구 브리지
+
+Gemini Interactions API에서 `requires_action` 상태로 멈춘 작업을 오류로 종료하지 않도록 변경했습니다. 공식 Interactions API 문서는 `requires_action`을 호출 측 도구 실행/결과 입력이 필요한 상태로 정의합니다. 또한 Interactions 개요는 Gemini 3 모델에서 원격 MCP 지원이 아직 제한된다고 안내하므로, 이 버전은 Gemini에 표준 function 도구 3개를 선언하고 Pages Function이 호출을 기존 원격 MCP Worker로 전달하는 브리지를 사용합니다.
+
+흐름은 다음과 같습니다.
+
+1. Gemini가 `search_parking`, `find_available_parking`, `get_parking_detail` 중 필요한 함수 호출을 요청합니다.
+2. `/api/ai-search`가 Streamable HTTP MCP 규약으로 기존 Worker의 `/mcp`에 `tools/call`을 보냅니다.
+3. MCP 도구 결과를 `function_result`로 Gemini Interactions API에 제출합니다.
+4. Gemini가 결과를 바탕으로 자연어 답변을 완료할 때까지 백그라운드 상호작용을 조회합니다.
+
+브라우저는 여전히 Gemini 키를 받지 않으며, 기존 `GEMINI_API_KEY` Secret과 `BUSAN_PARKING_MCP_URL` 환경변수를 사용합니다. MCP Worker 코드는 바뀌지 않았으므로 이미 배포된 Worker의 재배포는 필요 없습니다. Pages 파일을 업데이트하고 다시 배포하세요.
+
+공식 참고: https://ai.google.dev/gemini-api/docs/function-calling/ · https://ai.google.dev/gemini-api/docs/interactions-overview · https://ai.google.dev/gemini-api/docs/background-execution

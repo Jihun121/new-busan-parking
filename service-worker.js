@@ -1,7 +1,7 @@
 /* 부산 주차장 PWA service worker
  * Caches only static app-shell files. /api/* is always network-only so live parking data is never served from this cache.
  */
-const CACHE_NAME = "busan-parking-pwa-static-v5-gemini-store";
+const CACHE_NAME = "busan-parking-pwa-static-v6-gemini-function-bridge";
 const APP_SHELL = [
     "/",
     "/index.html",
